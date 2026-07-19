@@ -10,6 +10,8 @@ pub struct MatchResult {
     pub primer_id: String,
     pub is_forward: bool,
     pub mismatches: usize,
+    pub start_pos: usize,
+    pub end_pos: usize,
     pub status: String, // "Perfect", "Warning (1-4)", "Not Found"
 }
 
@@ -115,7 +117,7 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    status: "Invalid Primer".to_string(),
+                    start_pos: 0, end_pos: 0, status: "Invalid Primer".to_string(),
                 });
                 continue;
             }
@@ -127,12 +129,13 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    status: "Not Found (Sample too short)".to_string(),
+                    start_pos: 0, end_pos: 0, status: "Not Found (Sample too short)".to_string(),
                 });
                 continue;
             }
             
             let mut best_mismatches = usize::MAX;
+            let mut best_index = 0;
 
             // Slide the primer across the genome. 
             // We pad the window slightly to allow for insertions/deletions.
@@ -143,6 +146,7 @@ pub fn scan_genomes(
                     
                     if dist < best_mismatches {
                         best_mismatches = dist;
+                        best_index = i;
                     }
                     // Optimization: If we find a perfect match, stop sliding!
                     if best_mismatches == 0 { break; }
@@ -157,12 +161,21 @@ pub fn scan_genomes(
             } else {
                 "Not Found"
             };
+            
+            // If it's not found, coordinates are 0. Otherwise, 1-based coords.
+            let (start, end) = if best_mismatches > 4 {
+                (0, 0)
+            } else {
+                (best_index + 1, best_index + p_len)
+            };
 
             results.push(MatchResult {
                 sample_id: s_id.clone(),
                 primer_id: p_id.clone(),
                 is_forward: !is_reverse || is_forward,
                 mismatches: if best_mismatches > 4 { 99 } else { best_mismatches },
+                start_pos: start,
+                end_pos: end,
                 status: status.to_string(),
             });
         }

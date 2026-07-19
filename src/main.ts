@@ -7,6 +7,7 @@ const revInput = document.getElementById('rev-key') as HTMLInputElement;
 const primersFile = document.getElementById('primers-file') as HTMLInputElement;
 const samplesFile = document.getElementById('samples-file') as HTMLInputElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
+const exportCsvBtn = document.getElementById('export-csv-btn') as HTMLButtonElement;
 
 // Dashboard Elements
 const dashboard = document.getElementById('dashboard') as HTMLDivElement;
@@ -43,7 +44,7 @@ const worker = new ScannerWorker();
 
 worker.onmessage = (event) => {
     const response = event.data;
-    runBtn.innerText = "🚀 Scan Genomes";
+    runBtn.innerText = "Scan Genomes";
     runBtn.disabled = false;
 
     if (response.success) {
@@ -103,6 +104,8 @@ function renderTable() {
         tr.innerHTML = `
             <td style="padding: 10px;">${res.sample_id}</td>
             <td style="padding: 10px;">${res.primer_id}</td>
+            <td style="padding: 10px;">${res.start_pos || '-'}</td>
+            <td style="padding: 10px;">${res.end_pos || '-'}</td>
             <td style="padding: 10px;">${res.mismatches === 99 ? '-' : res.mismatches}</td>
             <td style="padding: 10px; font-weight: bold; color: ${color};">${res.status}</td>
         `;
@@ -154,6 +157,43 @@ runBtn.addEventListener('click', async () => {
     } catch (err) {
         alert("Failed to read files.");
         runBtn.disabled = false;
-        runBtn.innerText = "🚀 Scan Genomes";
+        runBtn.innerText = "Scan Genomes";
     }
+});
+
+// -----------------------------------------
+// EXPORT TO CSV
+// -----------------------------------------
+exportCsvBtn.addEventListener('click', () => {
+    if (allResults.length === 0) return;
+
+    // 1. Create the CSV Header
+    const headers = ["Sample ID", "Primer ID", "Orientation", "Start", "End", "Mismatches", "Status"];
+    
+    // 2. Map the data rows
+    const rows = allResults.map(r => {
+        return [
+            r.sample_id,
+            r.primer_id,
+            r.is_forward ? "Forward" : "Reverse",
+            r.start_pos || "N/A",
+            r.end_pos || "N/A",
+            r.mismatches === 99 ? "N/A" : r.mismatches,
+            r.status
+        ].join("\t"); // Join columns with tabs
+    });
+
+    // 3. Combine header and rows
+    const csvContent = [headers.join("\t"), ...rows].join("\n");
+
+    // 4. Create a virtual Blob and trigger standard browser download
+    const blob = new Blob([csvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "primer_mismatch_results.tsv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 });
