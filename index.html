@@ -37,7 +37,18 @@
       <button id="run-btn" style="width: 100%; padding: 15px; font-size: 18px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
         Scan Genomes
       </button>
-      
+
+      <!-- Progress Bar (Hidden by default) -->
+      <div id="progress-container" style="display: none; margin-top: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+          <span style="font-weight: bold; font-size: 14px; color: #4b5563;">Scanning Genomes...</span>
+          <span id="progress-text" style="font-weight: bold; font-size: 14px; color: #4b5563;">0%</span>
+        </div>
+        <div style="width: 100%; background-color: #e5e7eb; border-radius: 999px; height: 12px; overflow: hidden;">
+          <div id="progress-bar" style="width: 0%; height: 100%; background-color: #10b981; transition: width 0.1s linear;"></div>
+        </div>
+      </div>
+
       <!-- Summary Dashboard (Hidden by default) -->
       <div id="dashboard" style="display: none; margin-top: 30px;">
         <h2>Results Summary</h2>

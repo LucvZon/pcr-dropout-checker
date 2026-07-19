@@ -8,6 +8,9 @@ const primersFile = document.getElementById('primers-file') as HTMLInputElement;
 const samplesFile = document.getElementById('samples-file') as HTMLInputElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const exportCsvBtn = document.getElementById('export-csv-btn') as HTMLButtonElement;
+const progressContainer = document.getElementById('progress-container') as HTMLDivElement;
+const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
+const progressText = document.getElementById('progress-text') as HTMLSpanElement;
 
 // Dashboard Elements
 const dashboard = document.getElementById('dashboard') as HTMLDivElement;
@@ -44,19 +47,32 @@ const worker = new ScannerWorker();
 
 worker.onmessage = (event) => {
     const response = event.data;
-    runBtn.innerText = "Scan Genomes";
-    runBtn.disabled = false;
 
-    if (response.success) {
-        allResults = response.data;
-        updateDashboard();
+    // Handle Progress Updates
+    if (response.type === 'progress') {
+        progressContainer.style.display = "block";
+        progressBar.style.width = `${response.percent}%`;
+        progressText.innerText = `${Math.round(response.percent)}%`;
+        return; // Exit early, we aren't done yet!
+    }
+
+    // Handle Final Completion
+    if (response.type === 'complete') {
+        runBtn.innerText = "🚀 Scan Genomes";
+        runBtn.disabled = false;
         
-        // Reset to page 1 and render table
-        currentPage = 1;
-        renderTable();
-        dashboard.style.display = "block";
-    } else {
-        alert("Error: " + response.error);
+        // Hide progress bar once finished
+        setTimeout(() => { progressContainer.style.display = "none"; }, 500);
+
+        if (response.success) {
+            allResults = response.data;
+            updateDashboard();
+            currentPage = 1;
+            renderTable();
+            dashboard.style.display = "block";
+        } else {
+            alert("Error: " + response.error);
+        }
     }
 };
 
@@ -141,6 +157,11 @@ runBtn.addEventListener('click', async () => {
 
     runBtn.disabled = true;
     runBtn.innerText = "⏳ Reading files & Processing...";
+
+    // Reset progress bar visually
+    progressContainer.style.display = "block";
+    progressBar.style.width = "0%";
+    progressText.innerText = "0%";
 
     try {
         // Read the actual text content from the uploaded files

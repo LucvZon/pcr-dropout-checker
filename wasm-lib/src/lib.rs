@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
+use js_sys::Function;
 
 // -----------------------------------------
 // 1. DATA STRUCTURES (What we send to JS)
@@ -85,11 +86,16 @@ pub fn scan_genomes(
     samples_fasta: &str,
     fwd_keyword: &str,
     rev_keyword: &str,
+    progress_callback: &Function,
 ) -> String {
     
     let primers = parse_fasta(primers_fasta);
     let samples = parse_fasta(samples_fasta);
     let mut results: Vec<MatchResult> = Vec::new();
+    
+    // Calculate total work for the progress bar
+    let total_scans = primers.len() * samples.len();
+    let mut completed_scans = 0;
 
     // Process Primers
     for (p_id, p_seq) in primers {
@@ -178,9 +184,19 @@ pub fn scan_genomes(
                 end_pos: end,
                 status: status.to_string(),
             });
+            
+            // Progress Bar Logic
+            completed_scans += 1;
+            
+            // Performance trick: Calling JS from Rust has a tiny overhead
+            // Only trigger the callback every 10 scans (or on the very last scan) to keep it fast
+            if completed_scans % 10 == 0 || completed_scans == total_scans {
+                let percent = (completed_scans as f64 / total_scans as f64) * 100.0;
+                // Call the JavaScript function
+                let _ = progress_callback.call1(&JsValue::null(), &JsValue::from_f64(percent));
+            }
         }
     }
-
     // Convert the Rust Structs to a JSON string to send back to JS
     serde_json::to_string(&results).unwrap()
 }

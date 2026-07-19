@@ -11,14 +11,20 @@ self.onmessage = async (event) => {
         // Initialize the WebAssembly module
         await init();
 
+        // Create the JavaScript callback that Rust will trigger
+        const progressCallback = (percent: number) => {
+            // Send a progress message to the Main UI
+            self.postMessage({ type: 'progress', percent: percent });
+        };
+
         // RUN THE RUST ENGINE! (This happens in the background)
-        const resultJsonString = scan_genomes(primersFasta, samplesFasta, fwdKeyword, revKeyword);
+        const resultJsonString = scan_genomes(primersFasta, samplesFasta, fwdKeyword, revKeyword, progressCallback);
 
         // Parse the JSON string from Rust into actual JavaScript Objects
         const results = JSON.parse(resultJsonString);
 
         // Send the objects back to the main UI thread
-        self.postMessage({ success: true, data: results });
+        self.postMessage({ type: 'complete', success: true, data: results });
         
     } catch (error) {
         // If anything crashes, tell the UI
