@@ -58,7 +58,7 @@ worker.onmessage = (event) => {
 
     // Handle Final Completion
     if (response.type === 'complete') {
-        runBtn.innerText = "🚀 Scan Genomes";
+        runBtn.innerText = "Scan Genomes";
         runBtn.disabled = false;
         
         // Hide progress bar once finished
