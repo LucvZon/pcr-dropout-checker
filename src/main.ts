@@ -149,8 +149,11 @@ function renderTable() {
         if (res.status === "High Risk") color = "#ea580c"; // Dark Orange
         if (res.status === "Failure") color = "red";
 
-        // Display the Alignment string (make X's red for easy reading)
-        const formattedAlignment = res.alignment.replace(/X/g, '<span style="color:red; font-weight:bold;">X</span>');
+        // Convert [T] into a red T, while keeping normal nucleotides black
+        const formattedAlignment = res.alignment.replace(
+            /\[([A-Z-])\]/g, 
+            '<span style="color:red; font-weight:bold;">$1</span>'
+        );
 
         tr.innerHTML = `
             <td style="padding: 10px;">${res.sample_id}</td>
@@ -232,7 +235,7 @@ exportCsvBtn.addEventListener('click', () => {
     if (allResults.length === 0) return;
 
     // 1. Create the CSV Header
-    const headers = ["Sample ID", "Primer ID", "Orientation", "Start", "End", "Mismatches", "Status"];
+    const headers = ["Sample ID", "Primer ID", "Orientation", "Start", "End", "Mismatches", "Status", "Alignment Map"];
     
     // 2. Map the data rows
     const rows = allResults.map(r => {
@@ -243,7 +246,8 @@ exportCsvBtn.addEventListener('click', () => {
             r.start_pos || "N/A",
             r.end_pos || "N/A",
             r.mismatches === 99 ? "N/A" : r.mismatches,
-            r.status
+            r.status,
+            r.alignment
         ].join("\t"); // Join columns with tabs
     });
 

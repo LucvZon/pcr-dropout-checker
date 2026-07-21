@@ -111,17 +111,23 @@ fn evaluate_alignment(primer: &[u8], window: &[u8]) -> (usize, usize, bool, Stri
     let mut total_mismatches = 0;
     let mut critical_mismatches = 0;
     let mut absolute_3_prime_broken = false;
-    let mut alignment_str = String::with_capacity(len);
+    let mut alignment_str = String::with_capacity(len + 5); // Little extra capacity for brackets
 
     for i in 0..len {
+        let sample_base = window[i] as char;
+        
         if is_iupac_match(primer[i], window[i]) {
-            alignment_str.push('.'); // Match
+            // Match: Just push the sample's nucleotide
+            alignment_str.push(sample_base);
         } else {
-            alignment_str.push('X'); // Mismatch
+            // Mismatch: Wrap the mutated nucleotide in brackets [X]
+            alignment_str.push('[');
+            alignment_str.push(sample_base);
+            alignment_str.push(']');
+            
             total_mismatches += 1;
             
-            // Check if we are in the 3' Critical Zone (last 5 bases)
-            // Note: Primers are always 5' -> 3', so the end of the string is the 3' end.
+            // Check 3' Critical Zone (last 5 bases)
             if i >= len.saturating_sub(5) {
                 critical_mismatches += 1;
             }
