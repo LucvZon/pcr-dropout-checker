@@ -112,20 +112,19 @@ worker.onmessage = (event) => {
 // PAGINATION & RENDERING LOGIC
 // -----------------------------------------
 function updateDashboard() {
-    let perfect = 0;
-    let warn = 0;
-    let fail = 0;
+    let perfect = 0; let lowRisk = 0; let highRisk = 0; let failure = 0;
 
     for (const res of allResults) {
         if (res.status === "Perfect") perfect++;
-        else if (res.status.includes("Warning")) warn++;
-        else fail++;
+        else if (res.status === "Low Risk") lowRisk++;
+        else if (res.status === "High Risk") highRisk++;
+        else failure++;
     }
 
     sumTotal.innerText = allResults.length.toString();
     sumPerfect.innerText = perfect.toString();
-    sumWarn.innerText = warn.toString();
-    sumFail.innerText = fail.toString();
+    sumWarn.innerText = lowRisk.toString(); // Low risk maps to warning box
+    sumFail.innerText = failure.toString(); // High Risk/Failure maps to failure box
 }
 
 function renderTable() {
@@ -146,15 +145,19 @@ function renderTable() {
         // Determine Status Color
         let color = "#111827";
         if (res.status === "Perfect") color = "green";
-        if (res.status.includes("Warning")) color = "darkorange";
-        if (res.status.includes("Not Found") || res.status.includes("Invalid")) color = "red";
+        if (res.status === "Low Risk") color = "#d97706"; // Yellow/Orange
+        if (res.status === "High Risk") color = "#ea580c"; // Dark Orange
+        if (res.status === "Failure") color = "red";
+
+        // Display the Alignment string (make X's red for easy reading)
+        const formattedAlignment = res.alignment.replace(/X/g, '<span style="color:red; font-weight:bold;">X</span>');
 
         tr.innerHTML = `
             <td style="padding: 10px;">${res.sample_id}</td>
             <td style="padding: 10px;">${res.primer_id}</td>
             <td style="padding: 10px;">${res.start_pos || '-'}</td>
             <td style="padding: 10px;">${res.end_pos || '-'}</td>
-            <td style="padding: 10px;">${res.mismatches === 99 ? '-' : res.mismatches}</td>
+            <td style="padding: 10px; font-family: monospace; letter-spacing: 2px;">${formattedAlignment}</td>
             <td style="padding: 10px; font-weight: bold; color: ${color};">${res.status}</td>
         `;
         tableBody.appendChild(tr);

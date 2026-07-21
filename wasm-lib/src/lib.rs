@@ -13,7 +13,8 @@ pub struct MatchResult {
     pub mismatches: usize,
     pub start_pos: usize,
     pub end_pos: usize,
-    pub status: String, // "Perfect", "Warning (1-4)", "Not Found"
+    pub status: String,      // "Perfect", "Low Risk", "High Risk", "Failure"
+    pub alignment: String,   // A visual string e.g. ".....X.." (X = mismatch)
 }
 
 // -----------------------------------------
@@ -85,39 +86,52 @@ const IUPAC_TABLE: [u8; 256] = build_iupac_table();
 
 // Checks if two bases are biologically compatible
 #[inline(always)]
-fn is_iupac_match(a: u8, b: u8) -> bool {
+fn is_iupac_match(primer_base: u8, ref_base: u8) -> bool {
     // Fast path: Exact letters match
-    if a == b { return true; }
+    if primer_base == ref_base { return true; }
     
-    let mask_a = IUPAC_TABLE[a as usize];
-    let mask_b = IUPAC_TABLE[b as usize];
+    // If the reference genome has an 'N', treat it as a mismatch. 
+    // This prevents primers from magnetically snapping to N-stretches.
+    if ref_base == b'N' { return false; }
+    
+    let mask_p = IUPAC_TABLE[primer_base as usize];
+    let mask_r = IUPAC_TABLE[ref_base as usize];
     
     // If either letter is invalid/unknown (mask is 0), they don't match
-    if mask_a == 0 || mask_b == 0 { return false; }
+    if mask_p == 0 || mask_r == 0 { return false; }
     
     // Do they share at least one concrete base?
-    (mask_a & mask_b) != 0
+    (mask_p & mask_r) != 0
 }
 
-// IUPAC-aware Levenshtein distance (calculates mismatches/indels between two strings of similar length)
-fn levenshtein(a: &[u8], b: &[u8]) -> usize {
-    let mut d = vec![0; b.len() + 1];
-    for j in 0..=b.len() { d[j] = j; }
-    for (i, &ca) in a.iter().enumerate() {
-        let mut d_prev = i + 1;
-        for (j, &cb) in b.iter().enumerate() {
-            let d_curr = if is_iupac_match(ca, cb) {
-                d[j]
-            } else {
-                let min = d_prev.min(d[j]).min(d[j + 1]);
-                min + 1
-            };
-            d[j] = d_prev;
-            d_prev = d_curr;
+// Position-Aware Alignment Evaluator
+// Returns: (Total Mismatches, Mismatches in 3' Zone, Is absolute 3' broken, Alignment String)
+fn evaluate_alignment(primer: &[u8], window: &[u8]) -> (usize, usize, bool, String) {
+    let len = primer.len();
+    let mut total_mismatches = 0;
+    let mut critical_mismatches = 0;
+    let mut absolute_3_prime_broken = false;
+    let mut alignment_str = String::with_capacity(len);
+
+    for i in 0..len {
+        if is_iupac_match(primer[i], window[i]) {
+            alignment_str.push('.'); // Match
+        } else {
+            alignment_str.push('X'); // Mismatch
+            total_mismatches += 1;
+            
+            // Check if we are in the 3' Critical Zone (last 5 bases)
+            // Note: Primers are always 5' -> 3', so the end of the string is the 3' end.
+            if i >= len.saturating_sub(5) {
+                critical_mismatches += 1;
+            }
+            // Check absolute last base
+            if i == len - 1 {
+                absolute_3_prime_broken = true;
+            }
         }
-        d[b.len()] = d_prev;
     }
-    d[b.len()]
+    (total_mismatches, critical_mismatches, absolute_3_prime_broken, alignment_str)
 }
 
 // -----------------------------------------
@@ -131,20 +145,18 @@ pub fn scan_genomes(
     rev_keyword: &str,
     progress_callback: &Function,
 ) -> String {
-    
     let primers = parse_fasta(primers_fasta);
     let samples = parse_fasta(samples_fasta);
     let mut results: Vec<MatchResult> = Vec::new();
-    
+
     // Calculate total work for the progress bar
     let total_scans = primers.len() * samples.len();
     let mut completed_scans = 0;
 
-    // Process Primers
     for (p_id, p_seq) in primers {
         let is_forward = p_id.contains(fwd_keyword);
         let is_reverse = p_id.contains(rev_keyword);
-        
+
         // If neither keyword is found, assume Forward to be safe
         let search_seq = if is_reverse && !is_forward {
             reverse_complement(&p_seq)
@@ -155,7 +167,7 @@ pub fn scan_genomes(
         let p_bytes = search_seq.as_bytes();
         let p_len = p_bytes.len();
 
-        // Scan all samples for this primer
+        // Process Primers
         for (s_id, s_seq) in &samples {
             let s_bytes = s_seq.as_bytes();
             
@@ -166,8 +178,11 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    start_pos: 0, end_pos: 0, status: "Invalid Primer".to_string(),
+                    start_pos: 0, end_pos: 0, 
+                    status: "Invalid Primer".to_string(),
+                    alignment: "".to_string(),
                 });
+                completed_scans += 1;
                 continue;
             }
 
@@ -178,41 +193,63 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    start_pos: 0, end_pos: 0, status: "Not Found (Sample too short)".to_string(),
+                    start_pos: 0, end_pos: 0, 
+                    status: "Not Found (Too short)".to_string(),
+                    alignment: "".to_string(),
                 });
+                completed_scans += 1;
                 continue;
             }
             
-            let mut best_mismatches = usize::MAX;
-            let mut best_index = 0;
-
-            // Slide the primer across the genome. 
-            // We pad the window slightly to allow for insertions/deletions.
-            if s_bytes.len() >= p_len {
-                for i in 0..=(s_bytes.len() - p_len) {
-                    let window = &s_bytes[i..(i + p_len)];
-                    let dist = levenshtein(p_bytes, window);
-                    
-                    if dist < best_mismatches {
-                        best_mismatches = dist;
-                        best_index = i;
-                    }
-                    // Optimization: If we find a perfect match, stop sliding!
-                    if best_mismatches == 0 { break; }
-                }
+            if p_len == 0 || s_bytes.len() < p_len {
+                results.push(MatchResult {
+                    sample_id: s_id.clone(), primer_id: p_id.clone(), is_forward: !is_reverse || is_forward,
+                    mismatches: 99, start_pos: 0, end_pos: 0,
+                    status: "Failure".to_string(), alignment: "".to_string(),
+                });
+                completed_scans += 1;
+                continue;
             }
 
-            // Determine Status based on your rule (>4 = Not Found)
-            let status = if best_mismatches == 0 {
+            let mut best_total_mismatches = usize::MAX;
+            let mut best_critical = 0;
+            let mut best_absolute_3 = false;
+            let mut best_index = 0;
+            let mut best_alignment = String::new();
+
+            // Slide window across genome
+            for i in 0..=(s_bytes.len() - p_len) {
+                let window = &s_bytes[i..(i + p_len)];
+                
+                // Fast path: if lengths match, evaluate
+                let (total, crit, abs_3, aln) = evaluate_alignment(p_bytes, window);
+                
+                // We optimize for lowest total mismatches. 
+                // (If there is a tie, we prefer the one with fewer critical mismatches)
+                if total < best_total_mismatches || (total == best_total_mismatches && crit < best_critical) {
+                    best_total_mismatches = total;
+                    best_critical = crit;
+                    best_absolute_3 = abs_3;
+                    best_index = i;
+                    best_alignment = aln;
+                }
+                
+                if best_total_mismatches == 0 { break; } // Perfect match found
+            }
+
+            // --- GRADING LOGIC ---
+            let status = if best_total_mismatches == 0 {
                 "Perfect"
-            } else if best_mismatches <= 4 {
-                "Warning"
+            } else if best_absolute_3 || best_critical >= 2 || best_total_mismatches > 5 {
+                "Failure"
+            } else if best_critical == 1 || best_total_mismatches >= 4 {
+                "High Risk"
             } else {
-                "Not Found"
+                "Low Risk"
             };
-            
+
             // If it's not found, coordinates are 0. Otherwise, 1-based coords.
-            let (start, end) = if best_mismatches > 4 {
+            let (start, end) = if best_total_mismatches > 5 {
                 (0, 0)
             } else {
                 (best_index + 1, best_index + p_len)
@@ -222,10 +259,11 @@ pub fn scan_genomes(
                 sample_id: s_id.clone(),
                 primer_id: p_id.clone(),
                 is_forward: !is_reverse || is_forward,
-                mismatches: if best_mismatches > 4 { 99 } else { best_mismatches },
+                mismatches: best_total_mismatches,
                 start_pos: start,
                 end_pos: end,
                 status: status.to_string(),
+                alignment: best_alignment,
             });
             
             // Progress Bar Logic
