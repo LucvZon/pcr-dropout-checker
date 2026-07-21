@@ -41,6 +41,38 @@ function readTextFile(file: File): Promise<string> {
 }
 
 // -----------------------------------------
+// INPUT VALIDATION (Guardrails)
+// -----------------------------------------
+async function validateFastaFile(file: File, fileType: string): Promise<boolean> {
+    // 1. Check File Extension
+    const validExtensions = ['.fasta', '.fa', '.fna', '.txt'];
+    const fileName = file.name.toLowerCase();
+    const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+
+    if (!hasValidExtension) {
+        alert(`❌ Invalid ${fileType} file: "${file.name}"\nPlease upload a .fasta, .fa, or .txt file.`);
+        return false;
+    }
+
+    // 2. Peek at the content (Read only the first 100 bytes)
+    try {
+        const chunk = file.slice(0, 100);
+        const text = await chunk.text();
+        
+        // A valid FASTA must start with '>' (ignoring leading whitespace/newlines)
+        if (!text.trim().startsWith('>')) {
+            alert(`❌ Format Error in ${fileType}: "${file.name}"\nThe file does not appear to be a valid FASTA format. It must start with a '>' character.`);
+            return false;
+        }
+    } catch (e) {
+        alert(`❌ Could not read the ${fileType} file: "${file.name}"`);
+        return false;
+    }
+
+    return true; // Passed all checks!
+}
+
+// -----------------------------------------
 // WORKER SETUP
 // -----------------------------------------
 const worker = new ScannerWorker();
@@ -155,6 +187,13 @@ runBtn.addEventListener('click', async () => {
         return;
     }
 
+    // --- Run the Validation Guardrails ---
+    const isPrimersValid = await validateFastaFile(pFile, "Primers");
+    if (!isPrimersValid) return; // Stop execution if invalid
+
+    const isSamplesValid = await validateFastaFile(sFile, "Samples");
+    if (!isSamplesValid) return; // Stop execution if invalid
+
     runBtn.disabled = true;
     runBtn.innerText = "⏳ Reading files & Processing...";
 
@@ -179,6 +218,7 @@ runBtn.addEventListener('click', async () => {
         alert("Failed to read files.");
         runBtn.disabled = false;
         runBtn.innerText = "Scan Genomes";
+        progressContainer.style.display = "none";
     }
 });
 
