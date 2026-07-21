@@ -45,25 +45,68 @@ fn parse_fasta(fasta_str: &str) -> Vec<(String, String)> {
     records
 }
 
-// Reverse Complement for the Reverse Primers
+// Advanced Reverse Complement (Handles all IUPAC codes)
 fn reverse_complement(seq: &str) -> String {
     seq.chars().rev().map(|c| match c {
-        'A' => 'T',
-        'T' => 'A',
-        'C' => 'G',
-        'G' => 'C',
-        _ => c, // Keep N's or other ambiguous bases as is
+        'A' => 'T', 'T' => 'A', 'U' => 'A', 'C' => 'G', 'G' => 'C',
+        'Y' => 'R', 'R' => 'Y', 'W' => 'W', 'S' => 'S', 'K' => 'M',
+        'M' => 'K', 'D' => 'H', 'H' => 'D', 'V' => 'B', 'B' => 'V',
+        'N' => 'N', '-' => '-',
+        _ => c, // Keep unexpected characters as-is
     }).collect()
 }
 
-// Basic Levenshtein distance (calculates mismatches/indels between two strings of similar length)
+// Build a static lookup table for lightning-fast bitmask retrieval
+const fn build_iupac_table() -> [u8; 256] {
+    let mut table = [0; 256];
+    table[b'A' as usize] = 0b00001;
+    table[b'C' as usize] = 0b00010;
+    table[b'G' as usize] = 0b00100;
+    table[b'T' as usize] = 0b01000;
+    table[b'U' as usize] = 0b01000;
+    
+    table[b'R' as usize] = 0b00101; // A or G
+    table[b'Y' as usize] = 0b01010; // C or T
+    table[b'S' as usize] = 0b00110; // G or C
+    table[b'W' as usize] = 0b01001; // A or T
+    table[b'K' as usize] = 0b01100; // G or T
+    table[b'M' as usize] = 0b00011; // A or C
+    
+    table[b'B' as usize] = 0b01110; // C, G, T
+    table[b'D' as usize] = 0b01101; // A, G, T
+    table[b'H' as usize] = 0b01011; // A, C, T
+    table[b'V' as usize] = 0b00111; // A, C, G
+    
+    table[b'N' as usize] = 0b01111; // Any base
+    table[b'-' as usize] = 0b10000; // Gap matches gap
+    table
+}
+const IUPAC_TABLE: [u8; 256] = build_iupac_table();
+
+// Checks if two bases are biologically compatible
+#[inline(always)]
+fn is_iupac_match(a: u8, b: u8) -> bool {
+    // Fast path: Exact letters match
+    if a == b { return true; }
+    
+    let mask_a = IUPAC_TABLE[a as usize];
+    let mask_b = IUPAC_TABLE[b as usize];
+    
+    // If either letter is invalid/unknown (mask is 0), they don't match
+    if mask_a == 0 || mask_b == 0 { return false; }
+    
+    // Do they share at least one concrete base?
+    (mask_a & mask_b) != 0
+}
+
+// IUPAC-aware Levenshtein distance (calculates mismatches/indels between two strings of similar length)
 fn levenshtein(a: &[u8], b: &[u8]) -> usize {
     let mut d = vec![0; b.len() + 1];
     for j in 0..=b.len() { d[j] = j; }
     for (i, &ca) in a.iter().enumerate() {
         let mut d_prev = i + 1;
         for (j, &cb) in b.iter().enumerate() {
-            let d_curr = if ca == cb {
+            let d_curr = if is_iupac_match(ca, cb) {
                 d[j]
             } else {
                 let min = d_prev.min(d[j]).min(d[j + 1]);
