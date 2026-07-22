@@ -19,6 +19,17 @@ const sumPerfect = document.getElementById('sum-perfect') as HTMLHeadingElement;
 const sumWarn = document.getElementById('sum-warn') as HTMLHeadingElement;
 const sumFail = document.getElementById('sum-fail') as HTMLHeadingElement;
 
+// Tab Elements
+const tabNav = document.getElementById('tab-nav') as HTMLDivElement;
+const tabBtnTable = document.getElementById('tab-btn-table') as HTMLButtonElement;
+const tabBtnMap = document.getElementById('tab-btn-map') as HTMLButtonElement;
+const viewTable = document.getElementById('view-table') as HTMLDivElement;
+const viewMap = document.getElementById('view-map') as HTMLDivElement;
+const resultsContainer = document.getElementById('results-container') as HTMLDivElement;
+
+// Map Elements
+const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
+
 // Table Elements
 const tableBody = document.getElementById('table-body') as HTMLTableSectionElement;
 const prevBtn = document.getElementById('prev-btn') as HTMLButtonElement;
@@ -96,17 +107,75 @@ worker.onmessage = (event) => {
         // Hide progress bar once finished
         setTimeout(() => { progressContainer.style.display = "none"; }, 500);
 
-        if (response.success) {
-            allResults = response.data;
-            updateDashboard();
-            currentPage = 1;
-            renderTable();
-            dashboard.style.display = "block";
-        } else {
-            alert("Error: " + response.error);
-        }
+		if (response.success) {
+			allResults = response.data;
+			updateDashboard();
+			currentPage = 1;
+			renderTable();
+            
+			// --- Populate the Map Dropdown ---
+			// 1. Get unique sample IDs
+			const uniqueSamples = [...new Set(allResults.map(r => r.sample_id))];
+            
+			// 2. Clear old dropdown options
+			sampleSelect.innerHTML = "";
+            
+			// 3. Add new options
+			uniqueSamples.forEach(sampleId => {
+				const option = document.createElement("option");
+				option.value = sampleId;
+				option.textContent = sampleId;
+				sampleSelect.appendChild(option);
+			});
+			// --------------------------------------
+
+			// Show the UI (Tabs and Results)
+			tabNav.style.display = "flex";
+			resultsContainer.style.display = "block";
+		} else {
+			alert("Error: " + response.error);
+		}
     }
 };
+
+// -----------------------------------------
+// TAB NAVIGATION LOGIC
+// -----------------------------------------
+tabBtnTable.addEventListener('click', () => {
+    // Show Table, Hide Map
+    viewTable.style.display = "block";
+    viewMap.style.display = "none";
+    
+    // Style Active Button
+    tabBtnTable.style.background = "white";
+    tabBtnTable.style.border = "2px solid #d1d5db";
+    tabBtnTable.style.borderBottom = "2px solid white";
+    tabBtnTable.style.color = "#2563eb";
+    
+    // Style Inactive Button
+    tabBtnMap.style.background = "#f3f4f6";
+    tabBtnMap.style.border = "2px solid transparent";
+    tabBtnMap.style.borderBottom = "none";
+    tabBtnMap.style.color = "#6b7280";
+});
+
+tabBtnMap.addEventListener('click', () => {
+    // Show Map, Hide Table
+    viewMap.style.display = "block";
+    viewTable.style.display = "none";
+    
+    // Style Active Button
+    tabBtnMap.style.background = "white";
+    tabBtnMap.style.border = "2px solid #d1d5db";
+    tabBtnMap.style.borderBottom = "2px solid white";
+    tabBtnMap.style.color = "#2563eb";
+    
+    // Style Inactive Button
+    tabBtnTable.style.background = "#f3f4f6";
+    tabBtnTable.style.border = "2px solid transparent";
+    tabBtnTable.style.borderBottom = "none";
+    tabBtnTable.style.color = "#6b7280";
+});
 
 // -----------------------------------------
 // PAGINATION & RENDERING LOGIC
