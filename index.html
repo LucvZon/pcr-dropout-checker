@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/pcr-dropout-checker/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>primer-check</title>
-    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-Dg65pGkN.js"></script>
+    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-u3cHkBzD.js"></script>
   </head>
   <body style="font-family: system-ui, sans-serif; background: #f9fafb; color: #111827; margin: 0; padding: 20px;">
     <div style="max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -49,51 +49,79 @@
           <div id="progress-bar" style="width: 0%; height: 100%; background-color: #10b981; transition: width 0.1s linear;"></div>
         </div>
       </div>
+      
+      <!-- Tab Navigation (Hidden by default) -->
+      <div id="tab-nav" style="display: none; border-bottom: 2px solid #e5e7eb; margin-top: 30px; margin-bottom: 20px; gap: 5px;">
+        <button id="tab-btn-table" style="padding: 10px 20px; font-weight: bold; font-size: 16px; background: white; border: 2px solid #d1d5db; border-bottom: 2px solid white; border-radius: 6px 6px 0 0; cursor: pointer; color: #2563eb; margin-bottom: -2px;">Table View</button>
+        <button id="tab-btn-map" style="padding: 10px 20px; font-weight: bold; font-size: 16px; background: #f3f4f6; border: 2px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; color: #6b7280; margin-bottom: -2px;">Genome Map</button>
+      </div>
 
-      <!-- Summary Dashboard (Hidden by default) -->
-      <div id="dashboard" style="display: none; margin-top: 30px;">
-        <h2>Results Summary</h2>
+      <!-- Results Container -->
+      <div id="results-container" style="display: none;">
+        
+        <!-- ============================ -->
+        <!-- TAB 1: TABLE VIEW            -->
+        <!-- ============================ -->
+        <div id="view-table">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>Results Summary</h2>
           <button id="export-csv-btn" style="padding: 10px 15px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
             📥 Export to TSV
           </button>
-        <div style="display: flex; gap: 15px; text-align: center; margin-bottom: 20px;">
-          <div style="flex: 1; padding: 15px; background: #eff6ff; border-radius: 6px;">
-            <h3 id="sum-total" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Total Scans</p>
           </div>
-          <div style="flex: 1; padding: 15px; background: #f0fdf4; border-radius: 6px; color: #166534;">
-            <h3 id="sum-perfect" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Perfect</p>
+          
+          <div style="display: flex; gap: 15px; text-align: center; margin-bottom: 20px;">
+            <div style="flex: 1; padding: 15px; background: #eff6ff; border-radius: 6px;">
+              <h3 id="sum-total" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Total Scans</p>
+            </div>
+            <div style="flex: 1; padding: 15px; background: #f0fdf4; border-radius: 6px; color: #166534;">
+              <h3 id="sum-perfect" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Perfect</p>
+            </div>
+            <div style="flex: 1; padding: 15px; background: #fffbeb; border-radius: 6px; color: #b45309;">
+              <h3 id="sum-warn" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Low Risk</p>
+            </div>
+            <div style="flex: 1; padding: 15px; background: #fef2f2; border-radius: 6px; color: #991b1b;">
+              <h3 id="sum-fail" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">High Risk/Fail</p>
+            </div>
           </div>
-          <div style="flex: 1; padding: 15px; background: #fffbeb; border-radius: 6px; color: #b45309;">
-            <h3 id="sum-warn" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Warnings</p>
-          </div>
-          <div style="flex: 1; padding: 15px; background: #fef2f2; border-radius: 6px; color: #991b1b;">
-            <h3 id="sum-fail" style="margin: 0; font-size: 24px;">0</h3><p style="margin: 0;">Not Found</p>
+
+          <table style="width: 100%; border-collapse: collapse; text-align: left; margin-top: 20px;">
+            <thead>
+              <tr style="background: #f3f4f6; border-bottom: 2px solid #d1d5db;">
+                <th style="padding: 10px;">Sample ID</th>
+                <th style="padding: 10px;">Primer ID</th>
+                <th style="padding: 10px;">Start</th>
+                <th style="padding: 10px;">End</th>
+                <th style="padding: 10px;">Alignment Map</th>
+                <th style="padding: 10px;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+            <button id="prev-btn" style="padding: 8px 16px; cursor: pointer;" disabled>⬅️ Previous</button>
+            <span id="page-info">Page 1</span>
+            <button id="next-btn" style="padding: 8px 16px; cursor: pointer;" disabled>Next ➡️</button>
           </div>
         </div>
 
-        <!-- Paginated Table -->
-        <table style="width: 100%; border-collapse: collapse; text-align: left;">
-          <thead>
-            <tr style="background: #f3f4f6; border-bottom: 2px solid #d1d5db;">
-              <th style="padding: 10px;">Sample ID</th>
-              <th style="padding: 10px;">Primer ID</th>
-              <th style="padding: 10px;">Start</th>
-              <th style="padding: 10px;">End</th>
-              <th style="padding: 10px;">Alignment Map</th> 
-              <th style="padding: 10px;">Status</th>
-            </tr>
-          </thead>
-          <tbody id="table-body">
-            <!-- Rows will be injected here via TypeScript -->
-          </tbody>
-        </table>
-
-        <!-- Pagination Controls -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
-          <button id="prev-btn" style="padding: 8px 16px; cursor: pointer;" disabled>⬅️ Previous</button>
-          <span id="page-info">Page 1</span>
-          <button id="next-btn" style="padding: 8px 16px; cursor: pointer;" disabled>Next ➡️</button>
+        <!-- ============================ -->
+        <!-- TAB 2: GENOME MAP            -->
+        <!-- ============================ -->
+        <div id="view-map" style="display: none;">
+          <div style="margin-bottom: 20px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+            <label style="font-weight: bold; font-size: 14px; color: #334155;">Select Sample to Visualize:</label><br>
+            <select id="sample-select" style="padding: 8px; margin-top: 5px; width: 100%; max-width: 400px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 14px;">
+              <!-- Options populated by TypeScript -->
+            </select>
+          </div>
+          
+          <div id="genome-map-container" style="position: relative; width: 100%; min-height: 400px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 20px; box-sizing: border-box; overflow-x: auto;">
+            <p style="text-align: center; color: #9ca3af; margin-top: 150px;">Map will be rendered here.</p>
+          </div>
         </div>
+
       </div>
     </div>
     
