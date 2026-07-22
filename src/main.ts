@@ -13,7 +13,6 @@ const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
 const progressText = document.getElementById('progress-text') as HTMLSpanElement;
 
 // Dashboard Elements
-const dashboard = document.getElementById('dashboard') as HTMLDivElement;
 const sumTotal = document.getElementById('sum-total') as HTMLHeadingElement;
 const sumPerfect = document.getElementById('sum-perfect') as HTMLHeadingElement;
 const sumWarn = document.getElementById('sum-warn') as HTMLHeadingElement;
