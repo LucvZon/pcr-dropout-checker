@@ -13,6 +13,7 @@ pub struct MatchResult {
     pub mismatches: usize,
     pub start_pos: usize,
     pub end_pos: usize,
+    pub sample_length: usize,
     pub status: String,      // "Perfect", "Low Risk", "High Risk", "Failure"
     pub alignment: String,   // A visual string e.g. ".....X.." (X = mismatch)
 }
@@ -184,7 +185,8 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    start_pos: 0, end_pos: 0, 
+                    start_pos: 0, end_pos: 0,
+                    sample_length: s_bytes.len(),
                     status: "Invalid Primer".to_string(),
                     alignment: "".to_string(),
                 });
@@ -199,7 +201,8 @@ pub fn scan_genomes(
                     primer_id: p_id.clone(),
                     is_forward: !is_reverse || is_forward,
                     mismatches: 99,
-                    start_pos: 0, end_pos: 0, 
+                    start_pos: 0, end_pos: 0,
+                    sample_length: s_bytes.len(),
                     status: "Not Found (Too short)".to_string(),
                     alignment: "".to_string(),
                 });
@@ -210,7 +213,7 @@ pub fn scan_genomes(
             if p_len == 0 || s_bytes.len() < p_len {
                 results.push(MatchResult {
                     sample_id: s_id.clone(), primer_id: p_id.clone(), is_forward: !is_reverse || is_forward,
-                    mismatches: 99, start_pos: 0, end_pos: 0,
+                    mismatches: 99, start_pos: 0, end_pos: 0, sample_length: s_bytes.len(),
                     status: "Failure".to_string(), alignment: "".to_string(),
                 });
                 completed_scans += 1;
@@ -268,6 +271,7 @@ pub fn scan_genomes(
                 mismatches: best_total_mismatches,
                 start_pos: start,
                 end_pos: end,
+                sample_length: s_bytes.len(),
                 status: status.to_string(),
                 alignment: best_alignment,
             });
