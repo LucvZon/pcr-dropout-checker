@@ -28,6 +28,7 @@ const resultsContainer = document.getElementById('results-container') as HTMLDiv
 
 // Map Elements
 const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
+const mapContainer = document.getElementById('genome-map-container') as HTMLDivElement;
 
 // Table Elements
 const tableBody = document.getElementById('table-body') as HTMLTableSectionElement;
@@ -333,3 +334,226 @@ exportCsvBtn.addEventListener('click', () => {
     link.click();
     document.body.removeChild(link);
 });
+
+// Redraw map when dropdown changes
+sampleSelect.addEventListener('change', () => {
+    drawGenomeMap(sampleSelect.value);
+});
+
+// Redraw map when tab is clicked
+tabBtnMap.addEventListener('click', () => {
+    viewMap.style.display = "block";
+    viewTable.style.display = "none";
+    // ... (existing button styling code) ...
+    
+    // DRAW THE MAP!
+    if (sampleSelect.value) {
+        drawGenomeMap(sampleSelect.value);
+    }
+});
+
+// -----------------------------------------
+// PHASE 2: GENOME MAP DRAWING ENGINE
+// -----------------------------------------
+function drawGenomeMap(sampleId: string) {
+    mapContainer.innerHTML = ""; // Clear old map
+
+    const sampleResults = allResults.filter(
+        r => r.sample_id === sampleId && r.start_pos > 0
+    );
+
+    if (sampleResults.length === 0) {
+        mapContainer.innerHTML = `<p style="text-align: center; color: #9ca3af; padding: 50px;">No valid primer alignments found for this sample.</p>`;
+        return;
+    }
+
+    const genomeLength = sampleResults[0].sample_length;
+    let currentZoom = 1.0;
+    
+    // We base the initial canvas width on the container's actual size on screen
+    const baseCanvasWidth = Math.max(1000, mapContainer.clientWidth - 40);
+
+    // -----------------------------------------
+    // A. INTERACTIVE WRAPPER (The Viewport)
+    // -----------------------------------------
+    const viewport = document.createElement('div');
+    viewport.style.width = "100%";
+    viewport.style.height = "500px"; // Fixed height keeps the UI clean
+    viewport.style.overflow = "auto"; // Provides the scrollbars
+    viewport.style.position = "relative";
+    viewport.style.cursor = "grab";
+    viewport.style.border = "1px solid #e5e7eb";
+    viewport.style.backgroundColor = "#f8fafc";
+    viewport.style.borderRadius = "6px";
+
+    const canvas = document.createElement('div');
+    canvas.style.position = "absolute";
+    canvas.style.top = "0px";
+    canvas.style.left = "0px";
+    canvas.style.width = `${baseCanvasWidth}px`;
+    // Space for ruler (40px) + space for all rows
+    const ROW_HEIGHT = 28;
+    const ROW_GAP = 8;
+    canvas.style.height = `${60 + sampleResults.length * (ROW_HEIGHT + ROW_GAP)}px`; 
+
+    // -----------------------------------------
+    // B. DYNAMIC RULER
+    // -----------------------------------------
+    const ruler = document.createElement('div');
+    ruler.style.position = "absolute";
+    ruler.style.top = "0px";
+    ruler.style.left = "0px";
+    ruler.style.width = "100%";
+    ruler.style.height = "30px";
+    ruler.style.borderBottom = "2px solid #64748b";
+    ruler.style.backgroundColor = "rgba(248, 250, 252, 0.9)"; // Slight transparency
+    ruler.style.zIndex = "10";
+    canvas.appendChild(ruler);
+
+    function drawRuler() {
+        ruler.innerHTML = ""; // Clear old ticks
+        
+        // Dynamically adjust number of ticks based on zoom level (max 100 ticks)
+        let tickCount = Math.max(5, Math.floor(10 * currentZoom));
+        if (tickCount > 100) tickCount = 100; 
+
+        for (let i = 0; i <= tickCount; i++) {
+            const bpLocation = Math.round((genomeLength / tickCount) * i);
+            const leftPercent = (i / tickCount) * 100;
+
+            const tick = document.createElement('div');
+            tick.style.position = "absolute";
+            tick.style.left = `${leftPercent}%`;
+            tick.style.top = "10px";
+            tick.style.height = "20px";
+            tick.style.borderLeft = "1px solid #94a3b8";
+            tick.style.fontSize = "11px";
+            tick.style.color = "#64748b";
+            tick.style.paddingLeft = "3px";
+            
+            // Format number neatly (e.g., 15.2k bp)
+            tick.innerText = bpLocation > 1000 ? `${(bpLocation/1000).toFixed(1)}k` : `${bpLocation}`;
+            ruler.appendChild(tick);
+        }
+    }
+
+    // -----------------------------------------
+    // C. Y-AXIS STAGGERING (1 Primer Per Row)
+    // -----------------------------------------
+    sampleResults.sort((a, b) => a.start_pos - b.start_pos);
+    const primerTrackAssignments = sampleResults.map((p, index) => {
+        return { primer: p, track: index };
+    });
+
+    // -----------------------------------------
+    // D. DRAW PRIMER BARS & MISMATCH MARKERS
+    // -----------------------------------------
+    primerTrackAssignments.forEach(({ primer, track }) => {
+        const leftPercent = (primer.start_pos / genomeLength) * 100;
+        const widthPercent = ((primer.end_pos - primer.start_pos + 1) / genomeLength) * 100;
+        const topPx = 40 + track * (ROW_HEIGHT + ROW_GAP); // 40px clears the ruler
+
+        let bgColor = "#22c55e"; 
+        if (primer.status === "Low Risk") bgColor = "#f59e0b"; 
+        if (primer.status === "High Risk") bgColor = "#ea580c"; 
+        if (primer.status === "Failure") bgColor = "#ef4444"; 
+
+        const bar = document.createElement('div');
+        bar.style.position = "absolute";
+        bar.style.left = `${leftPercent}%`;
+        bar.style.width = `max(${widthPercent}%, 2px)`; // Min width of 2px
+        bar.style.top = `${topPx}px`;
+        bar.style.height = `${ROW_HEIGHT}px`;
+        bar.style.backgroundColor = bgColor;
+        bar.style.borderRadius = "3px";
+        bar.style.boxShadow = "0 1px 2px rgba(0,0,0,0.2)";
+        bar.style.overflow = "hidden";
+        bar.style.display = "flex";
+        bar.style.alignItems = "center";
+        
+        const arrow = primer.is_forward ? "➔ " : "⬅ ";
+        bar.innerHTML = `<span style="font-size: 10px; color: white; font-weight: bold; white-space: nowrap; padding-left: 4px;">${arrow}${primer.primer_id}</span>`;
+        bar.title = `Primer: ${primer.primer_id}\nPos: ${primer.start_pos.toLocaleString()} - ${primer.end_pos.toLocaleString()} bp\nStatus: ${primer.status}\nMismatches: ${primer.mismatches}`;
+
+        // Mismatch Markers
+        if (primer.alignment && primer.alignment.includes('[')) {
+            let baseIndex = 0; let i = 0;
+            const primerLen = primer.end_pos - primer.start_pos + 1;
+            while (i < primer.alignment.length) {
+                if (primer.alignment[i] === '[') {
+                    const marker = document.createElement('div');
+                    marker.style.position = "absolute";
+                    marker.style.left = `${(baseIndex / primerLen) * 100}%`;
+                    marker.style.top = "0px";
+                    marker.style.width = "2px"; 
+                    marker.style.height = "100%";
+                    marker.style.backgroundColor = "#000000"; 
+                    bar.appendChild(marker);
+                    i += 3; baseIndex++;
+                } else {
+                    baseIndex++; i++;
+                }
+            }
+        }
+        canvas.appendChild(bar);
+    });
+
+    viewport.appendChild(canvas);
+    mapContainer.appendChild(viewport);
+
+    // -----------------------------------------
+    // E. EVENT LISTENERS (Zoom & Pan)
+    // -----------------------------------------
+    drawRuler(); // Draw initial ruler
+
+    // Zooming (Ctrl + Scroll)
+    viewport.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey && !e.metaKey) return; 
+        e.preventDefault(); 
+
+        const zoomDelta = e.deltaY > 0 ? 0.8 : 1.25; 
+        currentZoom = Math.max(1.0, Math.min(currentZoom * zoomDelta, 50.0)); 
+
+        // Physically widen the canvas. The %-based left/width of primers auto-scale!
+        canvas.style.width = `${baseCanvasWidth * currentZoom}px`;
+        
+        drawRuler(); 
+    }, { passive: false });
+
+    // Panning (Click & Drag)
+    let isDragging = false;
+    let startX: number, startY: number;
+    let scrollLeft: number, scrollTop: number;
+
+    viewport.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        viewport.style.cursor = "grabbing";
+        startX = e.pageX - viewport.offsetLeft;
+        startY = e.pageY - viewport.offsetTop;
+        scrollLeft = viewport.scrollLeft;
+        scrollTop = viewport.scrollTop;
+    });
+
+    viewport.addEventListener('mouseleave', () => {
+        isDragging = false;
+        viewport.style.cursor = "grab";
+    });
+
+    viewport.addEventListener('mouseup', () => {
+        isDragging = false;
+        viewport.style.cursor = "grab";
+    });
+
+    viewport.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        
+        const x = e.pageX - viewport.offsetLeft;
+        const y = e.pageY - viewport.offsetTop;
+        const walkX = (x - startX);
+        const walkY = (y - startY);
+        
+        viewport.scrollLeft = scrollLeft - walkX;
+        viewport.scrollTop = scrollTop - walkY;
+    });
+}
