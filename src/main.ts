@@ -41,6 +41,28 @@ let allResults: any[] = [];
 let currentPage = 1;
 const ROWS_PER_PAGE = 50;
 
+let sampleSequences = new Map<string, string>();
+
+// Fast manual parser to keep sequences in JavaScript memory
+function parseFastaToMap(fastaStr: string) {
+    sampleSequences.clear();
+    let currentId = "";
+    let currentSeq = "";
+    
+    for (const line of fastaStr.split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t) continue;
+        if (t.startsWith('>')) {
+            if (currentId) sampleSequences.set(currentId, currentSeq);
+            currentId = t.substring(1).trim();
+            currentSeq = "";
+        } else {
+            currentSeq += t.toLowerCase(); // Force to lowercase for standard alignment viewing
+        }
+    }
+    if (currentId) sampleSequences.set(currentId, currentSeq);
+}
+
 // Helper: Read an uploaded File as a String
 function readTextFile(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -281,6 +303,8 @@ runBtn.addEventListener('click', async () => {
         // Read the actual text content from the uploaded files
         const primersStr = await readTextFile(pFile);
         const samplesStr = await readTextFile(sFile);
+
+        parseFastaToMap(samplesStr);
 
         // Send strings to the background Web Worker
         worker.postMessage({
@@ -557,3 +581,52 @@ function drawGenomeMap(sampleId: string) {
         viewport.scrollTop = scrollTop - walkY;
     });
 }
+
+// -----------------------------------------
+// EXPORT GAP-PADDED ALIGNMENT FASTA
+// -----------------------------------------
+const exportFastaBtn = document.getElementById('export-fasta-btn') as HTMLButtonElement;
+
+exportFastaBtn.addEventListener('click', () => {
+    const currentSample = sampleSelect.value;
+    if (!currentSample) return;
+
+    // Filter results for the currently viewed sample
+    const sampleResults = allResults.filter(
+        r => r.sample_id === currentSample && r.start_pos > 0
+    );
+    if (sampleResults.length === 0) return;
+
+    // Get the full viral sample sequence
+    const fullSampleSeq = sampleSequences.get(currentSample) || "";
+    const genomeLen = fullSampleSeq.length;
+
+    // 1. Write the Reference Sequence
+    let fastaContent = `>${currentSample}\n${fullSampleSeq}\n`;
+
+    // 2. Write the padded primers
+    sampleResults.forEach(r => {
+        const startIdx = r.start_pos - 1; // Convert 1-based to 0-based index
+        const primerSeq = (r.mapped_primer_seq || "").toLowerCase();
+        
+        // Build the padded sequence string
+        const leftPad = "-".repeat(startIdx);
+        const rightPadLen = genomeLen - (startIdx + primerSeq.length);
+        const rightPad = rightPadLen > 0 ? "-".repeat(rightPadLen) : "";
+        
+        const paddedSeq = leftPad + primerSeq + rightPad;
+        
+        fastaContent += `>${r.primer_id}\n${paddedSeq}\n`;
+    });
+
+    // 3. Trigger Download
+    const blob = new Blob([fastaContent], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${currentSample}_amplicon_alignment.fasta`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+});
