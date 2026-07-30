@@ -38,9 +38,19 @@ const nextBtn = document.getElementById('next-btn') as HTMLButtonElement;
 const pageInfo = document.getElementById('page-info') as HTMLSpanElement;
 
 // Link to GitHub repo
-document.getElementById("github-link").addEventListener("click", async (e) => {
-  e.preventDefault();
-  await openUrl("https://github.com/lucvzon/pcr-dropout-checker");
+document.getElementById("github-link")?.addEventListener("click", async (e) => {
+  // Check if we are running inside the Tauri standalone app
+  if ('__TAURI_INTERNALS__' in window) {
+    e.preventDefault();
+    try {
+      // Must exactly match the case of the URL in src-tauri/capabilities/default.json
+      await openUrl("https://github.com/LucvZon/pcr-dropout-checker");
+    } catch (err) {
+      console.error("Failed to open URL in Tauri:", err);
+    }
+  }
+  // If we are in the web browser, we do not prevent default, 
+  // so the native <a href="..."> tag handles opening the new tab normally!
 });
 
 // Global State for Pagination
