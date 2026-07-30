@@ -50,7 +50,7 @@ document.getElementById("github-link")?.addEventListener("click", async (e) => {
     }
   }
   // If we are in the web browser, we do not prevent default, 
-  // so the native <a href="..."> tag handles opening the new tab normally!
+  // so the native <a href="..."> tag handles opening the new tab normally
 });
 
 // Global State for Pagination
@@ -171,6 +171,10 @@ worker.onmessage = (event) => {
 			// Show the UI (Tabs and Results)
 			tabNav.style.display = "flex";
 			resultsContainer.style.display = "block";
+
+            // Force the UI to reset to the Table Tab
+            tabBtnTable.click();
+
 		} else {
 			alert("Error: " + response.error);
 		}
