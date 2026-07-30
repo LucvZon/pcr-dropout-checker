@@ -236,7 +236,7 @@ function updateDashboard() {
     sumTotal.innerText = allResults.length.toString();
     sumPerfect.innerText = perfect.toString();
     sumWarn.innerText = lowRisk.toString(); // Low risk maps to warning box
-    sumFail.innerText = failure.toString(); // High Risk/Failure maps to failure box
+    sumFail.innerText = (highRisk + failure).toString(); // High Risk/Failure maps to failure box
 }
 
 function renderTable() {
