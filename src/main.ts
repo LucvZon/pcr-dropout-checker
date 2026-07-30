@@ -1,5 +1,6 @@
 // src/main.ts
 import ScannerWorker from './worker?worker';
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 // UI Elements
 const fwdInput = document.getElementById('fwd-key') as HTMLInputElement;
@@ -35,6 +36,12 @@ const tableBody = document.getElementById('table-body') as HTMLTableSectionEleme
 const prevBtn = document.getElementById('prev-btn') as HTMLButtonElement;
 const nextBtn = document.getElementById('next-btn') as HTMLButtonElement;
 const pageInfo = document.getElementById('page-info') as HTMLSpanElement;
+
+// Link to GitHub repo
+document.getElementById("github-link").addEventListener("click", async (e) => {
+  e.preventDefault();
+  await openUrl("https://github.com/lucvzon/pcr-dropout-checker");
+});
 
 // Global State for Pagination
 let allResults: any[] = [];
