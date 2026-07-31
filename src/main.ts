@@ -9,6 +9,7 @@ const primersFile = document.getElementById('primers-file') as HTMLInputElement;
 const samplesFile = document.getElementById('samples-file') as HTMLInputElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const exportCsvBtn = document.getElementById('export-csv-btn') as HTMLButtonElement;
+const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const progressContainer = document.getElementById('progress-container') as HTMLDivElement;
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
 const progressText = document.getElementById('progress-text') as HTMLSpanElement;
@@ -36,6 +37,16 @@ const tableBody = document.getElementById('table-body') as HTMLTableSectionEleme
 const prevBtn = document.getElementById('prev-btn') as HTMLButtonElement;
 const nextBtn = document.getElementById('next-btn') as HTMLButtonElement;
 const pageInfo = document.getElementById('page-info') as HTMLSpanElement;
+
+// Remember User Settings (LocalStorage)
+const savedFwd = localStorage.getItem('pcr-fwd-keyword');
+const savedRev = localStorage.getItem('pcr-rev-keyword');
+if (savedFwd) fwdInput.value = savedFwd;
+if (savedRev) revInput.value = savedRev;
+
+// Save keywords automatically when the user types
+fwdInput.addEventListener('input', () => localStorage.setItem('pcr-fwd-keyword', fwdInput.value));
+revInput.addEventListener('input', () => localStorage.setItem('pcr-rev-keyword', revInput.value));
 
 // Link to GitHub repo
 document.getElementById("github-link")?.addEventListener("click", async (e) => {
@@ -123,63 +134,84 @@ async function validateFastaFile(file: File, fileType: string): Promise<boolean>
 }
 
 // -----------------------------------------
-// WORKER SETUP
+// WORKER SETUP & CANCELLATION
 // -----------------------------------------
-const worker = new ScannerWorker();
+let worker: Worker;
 
-worker.onmessage = (event) => {
-    const response = event.data;
+function setupWorker() {
+    worker = new ScannerWorker();
+    
+    worker.onmessage = (event) => {
+        const response = event.data;
 
-    // Handle Progress Updates
-    if (response.type === 'progress') {
-        progressContainer.style.display = "block";
-        progressBar.style.width = `${response.percent}%`;
-        progressText.innerText = `${Math.round(response.percent)}%`;
-        return; // Exit early, we aren't done yet!
+        // Handle Progress Updates
+        if (response.type === 'progress') {
+            progressContainer.style.display = "block";
+            progressBar.style.width = `${response.percent}%`;
+            progressText.innerText = `${Math.round(response.percent)}%`;
+            return; // Exit early, we aren't done yet!
+        }
+
+        // Handle Final Completion
+        if (response.type === 'complete') {
+            runBtn.innerText = "Scan Genomes";
+            runBtn.disabled = false;
+            cancelBtn.style.display = "none"; // Hide Cancel button
+            
+            // Hide progress bar once finished
+            setTimeout(() => { progressContainer.style.display = "none"; }, 500);
+
+            if (response.success) {
+                allResults = response.data;
+                updateDashboard();
+                currentPage = 1;
+                renderTable();
+                
+                // --- Populate the Map Dropdown ---
+			    // 1. Get unique sample IDs
+                const uniqueSamples = [...new Set(allResults.map(r => r.sample_id))];
+                
+			    // 2. Clear old dropdown options 
+                sampleSelect.innerHTML = "";
+
+                // 3. Add new options
+                uniqueSamples.forEach(sampleId => {
+                    const option = document.createElement("option");
+                    option.value = sampleId;
+                    option.textContent = sampleId;
+                    sampleSelect.appendChild(option);
+                });
+
+                // Show the UI (Tabs and Results)
+                tabNav.style.display = "flex";
+                resultsContainer.style.display = "block";
+
+                // Force the UI to reset to the Table Tab
+                tabBtnTable.click();
+
+            } else {
+                alert("Error: " + response.error);
+            }
+        }
+    };
+}
+
+// Initialize the first worker when the app loads
+setupWorker();
+
+// Cancel Button Logic
+cancelBtn.addEventListener('click', () => {
+    if (worker) {
+        worker.terminate(); // 1. Kill the background thread instantly
+        setupWorker();      // 2. Spin up a fresh worker for the next run
     }
-
-    // Handle Final Completion
-    if (response.type === 'complete') {
-        runBtn.innerText = "Scan Genomes";
-        runBtn.disabled = false;
-        
-        // Hide progress bar once finished
-        setTimeout(() => { progressContainer.style.display = "none"; }, 500);
-
-		if (response.success) {
-			allResults = response.data;
-			updateDashboard();
-			currentPage = 1;
-			renderTable();
-            
-			// --- Populate the Map Dropdown ---
-			// 1. Get unique sample IDs
-			const uniqueSamples = [...new Set(allResults.map(r => r.sample_id))];
-            
-			// 2. Clear old dropdown options
-			sampleSelect.innerHTML = "";
-            
-			// 3. Add new options
-			uniqueSamples.forEach(sampleId => {
-				const option = document.createElement("option");
-				option.value = sampleId;
-				option.textContent = sampleId;
-				sampleSelect.appendChild(option);
-			});
-			// --------------------------------------
-
-			// Show the UI (Tabs and Results)
-			tabNav.style.display = "flex";
-			resultsContainer.style.display = "block";
-
-            // Force the UI to reset to the Table Tab
-            tabBtnTable.click();
-
-		} else {
-			alert("Error: " + response.error);
-		}
-    }
-};
+    
+    // Reset the UI
+    runBtn.disabled = false;
+    runBtn.innerText = "Scan Genomes";
+    cancelBtn.style.display = "none";
+    progressContainer.style.display = "none";
+});
 
 // -----------------------------------------
 // TAB NAVIGATION LOGIC
@@ -314,6 +346,7 @@ runBtn.addEventListener('click', async () => {
 
     runBtn.disabled = true;
     runBtn.innerText = "⏳ Reading files & Processing...";
+    cancelBtn.style.display = "block";
 
     // Reset progress bar visually
     progressContainer.style.display = "block";

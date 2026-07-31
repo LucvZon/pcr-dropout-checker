@@ -44,9 +44,14 @@
         </div>
       </div>
 
-      <button id="run-btn" style="width: 100%; padding: 15px; font-size: 18px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
-        Scan Genomes
-      </button>
+      <div style="display: flex; gap: 10px;">
+        <button id="run-btn" style="flex: 1; padding: 15px; font-size: 18px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s;">
+          Scan Genomes
+        </button>
+        <button id="cancel-btn" style="display: none; padding: 15px 25px; font-size: 18px; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s;">
+          Cancel Scan
+        </button>
+      </div>
 
       <!-- Progress Bar (Hidden by default) -->
       <div id="progress-container" style="display: none; margin-top: 20px;">
