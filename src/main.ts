@@ -104,10 +104,6 @@ function setupDragAndDrop(zoneId: string, inputId: string, textId: string) {
 setupDragAndDrop('primers-zone', 'primers-file', 'primers-name');
 setupDragAndDrop('samples-zone', 'samples-file', 'samples-name');
 
-// Initialize the drop zones
-setupDragAndDrop('primers-zone', 'primers-file');
-setupDragAndDrop('samples-zone', 'samples-file');
-
 // Link to GitHub repo
 document.getElementById("github-link")?.addEventListener("click", async (e) => {
   // Check if we are running inside the Tauri standalone app
