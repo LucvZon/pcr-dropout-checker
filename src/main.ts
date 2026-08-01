@@ -48,6 +48,66 @@ if (savedRev) revInput.value = savedRev;
 fwdInput.addEventListener('input', () => localStorage.setItem('pcr-fwd-keyword', fwdInput.value));
 revInput.addEventListener('input', () => localStorage.setItem('pcr-rev-keyword', revInput.value));
 
+// Drag and Drop File Zones
+// Prevent the app from navigating away if the user misses the drop zone,
+// BUT allow the drop if they hit the invisible <input> fields
+window.addEventListener("dragover", (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.type === 'file') return;
+    e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+    if (e.target instanceof HTMLInputElement && e.target.type === 'file') return;
+    e.preventDefault();
+});
+
+function setupDragAndDrop(zoneId: string, inputId: string, textId: string) {
+    const zone = document.getElementById(zoneId) as HTMLDivElement;
+    const input = document.getElementById(inputId) as HTMLInputElement;
+    const textLabel = document.getElementById(textId) as HTMLParagraphElement;
+
+    // Visual highlights when hovering over the invisible input
+    input.addEventListener('dragenter', () => {
+        zone.style.borderColor = '#2563eb';
+        zone.style.backgroundColor = '#eff6ff';
+    });
+
+    input.addEventListener('dragleave', () => {
+        if (input.files && input.files.length > 0) {
+            // Revert back to GREEN if a file is already loaded
+            zone.style.borderColor = '#10b981';
+            zone.style.backgroundColor = '#f0fdf4';
+        } else {
+            // Revert back to WHITE/GRAY if no file is loaded
+            zone.style.borderColor = '#d1d5db';
+            zone.style.backgroundColor = '#ffffff';
+        }
+    });
+
+    input.addEventListener('change', () => {
+        if (input.files && input.files.length > 0) {
+            // Turn green and show the filename
+            zone.style.borderColor = '#10b981';
+            zone.style.backgroundColor = '#f0fdf4';
+            textLabel.innerHTML = `✅ ${input.files[0].name}`;
+            textLabel.style.color = '#10b981';
+        } else {
+            // Reset if they cancel
+            zone.style.borderColor = '#d1d5db';
+            zone.style.backgroundColor = '#ffffff';
+            textLabel.innerText = "Drag & drop or click to browse";
+            textLabel.style.color = '#6b7280';
+        }
+    });
+}
+
+// Initialize the drop zones, passing in the text label IDs too
+setupDragAndDrop('primers-zone', 'primers-file', 'primers-name');
+setupDragAndDrop('samples-zone', 'samples-file', 'samples-name');
+
+// Initialize the drop zones
+setupDragAndDrop('primers-zone', 'primers-file');
+setupDragAndDrop('samples-zone', 'samples-file');
+
 // Link to GitHub repo
 document.getElementById("github-link")?.addEventListener("click", async (e) => {
   // Check if we are running inside the Tauri standalone app
