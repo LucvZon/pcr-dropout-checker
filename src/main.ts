@@ -492,204 +492,321 @@ tabBtnMap.addEventListener('click', () => {
 function drawGenomeMap(sampleId: string) {
     mapContainer.innerHTML = ""; // Clear old map
 
-    const sampleResults = allResults.filter(
-        r => r.sample_id === sampleId && r.start_pos > 0
-    );
-
-    if (sampleResults.length === 0) {
+    const sampleResults = allResults.filter(r => r.sample_id === sampleId && r.start_pos > 0);
+    const fullSampleSeq = sampleSequences.get(sampleId) || "";
+    
+    if (sampleResults.length === 0 || !fullSampleSeq) {
         mapContainer.innerHTML = `<p style="text-align: center; color: #9ca3af; padding: 50px;">No valid primer alignments found for this sample.</p>`;
         return;
     }
 
-    const genomeLength = sampleResults[0].sample_length;
-    let currentZoom = 1.0;
+    // 1. Sort and pre-process mismatches for lightning-fast rendering
+    sampleResults.sort((a, b) => a.start_pos - b.start_pos);
     
-    // We base the initial canvas width on the container's actual size on screen
-    const baseCanvasWidth = Math.max(1000, mapContainer.clientWidth - 40);
+    const parsedResults = sampleResults.map((p, index) => {
+        const mismatchIndices = new Set<number>();
+        let seqIndex = 0;
+        let i = 0;
+        while (i < p.alignment.length) {
+            if (p.alignment[i] === '[') {
+                mismatchIndices.add(seqIndex);
+                i += 3; // Skip [X]
+                seqIndex++;
+            } else {
+                i++;
+                seqIndex++;
+            }
+        }
+        return { ...p, track: index, mismatchIndices };
+    });
 
-    // -----------------------------------------
-    // A. INTERACTIVE WRAPPER (The Viewport)
-    // -----------------------------------------
-    const viewport = document.createElement('div');
-    viewport.style.width = "100%";
-    viewport.style.height = "500px"; // Fixed height keeps the UI clean
-    viewport.style.overflow = "auto"; // Provides the scrollbars
-    viewport.style.position = "relative";
-    viewport.style.cursor = "grab";
-    viewport.style.border = "1px solid #e5e7eb";
-    viewport.style.backgroundColor = "#f8fafc";
-    viewport.style.borderRadius = "6px";
+    const genomeLength = fullSampleSeq.length;
 
-    const canvas = document.createElement('div');
-    canvas.style.position = "absolute";
-    canvas.style.top = "0px";
-    canvas.style.left = "0px";
-    canvas.style.width = `${baseCanvasWidth}px`;
-    // Space for ruler (40px) + space for all rows
-    const ROW_HEIGHT = 28;
-    const ROW_GAP = 8;
-    canvas.style.height = `${60 + sampleResults.length * (ROW_HEIGHT + ROW_GAP)}px`; 
+    // 2. Setup the Canvas and DPI scaling
+    const canvas = document.createElement('canvas');
+    canvas.style.width = "100%";
+    canvas.style.height = "500px";
+    canvas.style.cursor = "grab";
+    canvas.style.borderRadius = "6px";
+    mapContainer.appendChild(canvas);
 
-    // -----------------------------------------
-    // B. DYNAMIC RULER
-    // -----------------------------------------
-    const ruler = document.createElement('div');
-    ruler.style.position = "absolute";
-    ruler.style.top = "0px";
-    ruler.style.left = "0px";
-    ruler.style.width = "100%";
-    ruler.style.height = "30px";
-    ruler.style.borderBottom = "2px solid #64748b";
-    ruler.style.backgroundColor = "rgba(248, 250, 252, 0.9)"; // Slight transparency
-    ruler.style.zIndex = "10";
-    canvas.appendChild(ruler);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    function drawRuler() {
-        ruler.innerHTML = ""; // Clear old ticks
+    let width = canvas.clientWidth;
+    let height = canvas.clientHeight;
+    
+    // Support Retina/High-DPI displays so text isn't blurry
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    // 3. State Variables
+    let zoom = width / genomeLength; // Pixels per base pair
+    let panX = 0; // Base pair at the left edge of the screen
+    let panY = 0; // Vertical scroll in pixels
+    
+    const ROW_HEIGHT = 20;
+    const ROW_GAP = 10;
+    const RULER_HEIGHT = 40;
+    const REF_SEQ_HEIGHT = 25; // Extra height for reference sequence when zoomed in
+    const ZOOM_THRESHOLD = 12; // When zoom > 12px per base, switch to text mode!
+
+    // 4. Main Render Loop
+    function render() {
+        if (!ctx) return;
         
-        // Dynamically adjust number of ticks based on zoom level (max 100 ticks)
-        let tickCount = Math.max(5, Math.floor(10 * currentZoom));
-        if (tickCount > 100) tickCount = 100; 
+        // Clear screen
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillRect(0, 0, width, height);
 
-        for (let i = 0; i <= tickCount; i++) {
-            const bpLocation = Math.round((genomeLength / tickCount) * i);
-            const leftPercent = (i / tickCount) * 100;
+        const showText = zoom >= ZOOM_THRESHOLD;
+        const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
+        
+        const startBp = panX;
+        const endBp = panX + (width / zoom);
 
-            const tick = document.createElement('div');
-            tick.style.position = "absolute";
-            tick.style.left = `${leftPercent}%`;
-            tick.style.top = "10px";
-            tick.style.height = "20px";
-            tick.style.borderLeft = "1px solid #94a3b8";
-            tick.style.fontSize = "11px";
-            tick.style.color = "#64748b";
-            tick.style.paddingLeft = "3px";
+        // --- DRAW PRIMERS ---
+        ctx.font = "bold 14px monospace";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+
+        parsedResults.forEach(primer => {
+            const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
             
-            // Format number neatly (e.g., 15.2k bp)
-            tick.innerText = bpLocation > 1000 ? `${(bpLocation/1000).toFixed(1)}k` : `${bpLocation}`;
-            ruler.appendChild(tick);
+            // Culling: Don't draw if it's scrolled off-screen (above ruler or below canvas)
+            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) return;
+            
+            const startX = (primer.start_pos - 1 - panX) * zoom;
+            const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
+            
+            // Culling: Don't draw if it's panned completely off the left or right sides
+            if (startX > width || startX + primerWidth < 0) return;
+
+            if (showText) {
+                // MICRO VIEW: Draw Sequence Text
+                const seq = primer.mapped_primer_seq.toUpperCase();
+                for (let i = 0; i < seq.length; i++) {
+                    const charX = startX + (i * zoom);
+                    if (charX + zoom < 0 || charX > width) continue; // Cull characters off-screen
+
+                    const isMismatch = primer.mismatchIndices.has(i);
+
+                    // Draw Box
+                    ctx.fillStyle = isMismatch ? "#fee2e2" : "#e2e8f0"; // Red or Gray bg
+                    ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
+
+                    // Draw Letter
+                    ctx.fillStyle = isMismatch ? "#dc2626" : "#475569"; // Red or Dark Gray text
+                    ctx.fillText(seq[i], charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
+                }
+
+                // Draw Primer ID to the left
+                ctx.fillStyle = "#1e293b";
+                ctx.textAlign = "right";
+                ctx.fillText((primer.is_forward ? "➔ " : "⬅ ") + primer.primer_id, startX - 10, yPos + (ROW_HEIGHT / 2));
+                ctx.textAlign = "center"; // Reset
+
+            } else {
+                // MACRO VIEW: Draw Polygons
+                let color = "#22c55e"; 
+                if (primer.status === "Low Risk") color = "#f59e0b"; 
+                if (primer.status === "High Risk") color = "#ea580c"; 
+                if (primer.status === "Failure") color = "#ef4444"; 
+
+                ctx.fillStyle = color;
+                
+                // Draw a pointed polygon for orientation
+                ctx.beginPath();
+                if (primer.is_forward) {
+                    ctx.moveTo(startX, yPos);
+                    ctx.lineTo(startX + primerWidth - 10, yPos);
+                    ctx.lineTo(startX + primerWidth, yPos + (ROW_HEIGHT / 2));
+                    ctx.lineTo(startX + primerWidth - 10, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX, yPos + ROW_HEIGHT);
+                } else {
+                    ctx.moveTo(startX + primerWidth, yPos);
+                    ctx.lineTo(startX + 10, yPos);
+                    ctx.lineTo(startX, yPos + (ROW_HEIGHT / 2));
+                    ctx.lineTo(startX + 10, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX + primerWidth, yPos + ROW_HEIGHT);
+                }
+                ctx.fill();
+
+                // Draw ID inside the bar if it fits
+                if (primerWidth > 60) {
+                    ctx.fillStyle = "white";
+                    ctx.font = "bold 10px sans-serif";
+                    ctx.textAlign = "left";
+                    ctx.fillText(primer.primer_id, startX + (primer.is_forward ? 5 : 15), yPos + (ROW_HEIGHT / 2));
+                    ctx.textAlign = "center"; // Reset
+                }
+            }
+        });
+
+        // --- DRAW STICKY HEADER (Hides primers scrolling up) ---
+        ctx.fillStyle = "rgba(248, 250, 252, 0.95)";
+        ctx.fillRect(0, 0, width, stickyTopHeight);
+        ctx.beginPath();
+        ctx.moveTo(0, stickyTopHeight);
+        ctx.lineTo(width, stickyTopHeight);
+        ctx.strokeStyle = "#94a3b8";
+        ctx.stroke();
+
+        // --- DRAW REFERENCE SEQUENCE ---
+        if (showText) {
+            ctx.font = "bold 14px monospace";
+            ctx.textBaseline = "middle";
+            ctx.textAlign = "center";
+            
+            const firstVisibleBp = Math.max(0, Math.floor(startBp));
+            const lastVisibleBp = Math.min(genomeLength - 1, Math.ceil(endBp));
+
+            for (let i = firstVisibleBp; i <= lastVisibleBp; i++) {
+                const charX = (i - panX) * zoom;
+                
+                // Highlight Box
+                ctx.fillStyle = "#dbeafe";
+                ctx.fillRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
+                
+                // Border separator
+                ctx.strokeStyle = "#bfdbfe";
+                ctx.strokeRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
+
+                // Letter
+                ctx.fillStyle = "#1e40af";
+                ctx.fillText(fullSampleSeq[i].toUpperCase(), charX + (zoom / 2), RULER_HEIGHT + (REF_SEQ_HEIGHT / 2));
+            }
+        }
+
+        // --- DRAW RULER ---
+        ctx.fillStyle = "#475569";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        
+        // 1. Calculate a dynamic step size based on screen pixels
+        const minPixelsBetweenLabels = 100;
+        const targetBpSpacing = minPixelsBetweenLabels / zoom;
+        
+        // Find the closest "nice" number (1, 2, 5, 10, 50, 100, 1000, etc.)
+        const magnitude = Math.pow(10, Math.floor(Math.log10(targetBpSpacing || 1)));
+        const residual = targetBpSpacing / magnitude;
+        let majorStep = 10;
+        
+        if (residual < 1.5) majorStep = 1 * magnitude;
+        else if (residual < 3.5) majorStep = 2 * magnitude;
+        else if (residual < 7.5) majorStep = 5 * magnitude;
+        else majorStep = 10 * magnitude;
+
+        // Per user request: never label smaller than 10 bp increments at max zoom
+        if (majorStep < 10) majorStep = 10;
+
+        // Minor ticks between the labeled numbers
+        let minorStep = majorStep / 5;
+        if (minorStep < 1) minorStep = 1;
+
+        // 2. Draw the ticks and numbers
+        const firstMinorTick = Math.floor(startBp / minorStep) * minorStep;
+        
+        for (let i = firstMinorTick; i <= endBp + minorStep; i += minorStep) {
+            const currentBp = Math.round(i); // Prevent floating point drift
+            if (currentBp > genomeLength) break;
+            
+            const tickX = (currentBp - panX) * zoom;
+            const isMajor = currentBp % Math.round(majorStep) === 0;
+
+            // Draw Tick Line
+            ctx.beginPath();
+            ctx.moveTo(tickX, RULER_HEIGHT);
+            ctx.lineTo(tickX, RULER_HEIGHT - (isMajor ? 8 : 4)); // Taller for major ticks
+            ctx.strokeStyle = isMajor ? "#475569" : "#cbd5e1";
+            ctx.stroke();
+
+            // Draw Number Label
+            if (isMajor) {
+                // toLocaleString adds commas (e.g., 11,250 instead of 11.2k) which is much cleaner!
+                const label = currentBp.toLocaleString();
+                ctx.fillText(label, tickX, RULER_HEIGHT - 12);
+            }
         }
     }
 
-    // -----------------------------------------
-    // C. Y-AXIS STAGGERING (1 Primer Per Row)
-    // -----------------------------------------
-    sampleResults.sort((a, b) => a.start_pos - b.start_pos);
-    const primerTrackAssignments = sampleResults.map((p, index) => {
-        return { primer: p, track: index };
-    });
-
-    // -----------------------------------------
-    // D. DRAW PRIMER BARS & MISMATCH MARKERS
-    // -----------------------------------------
-    primerTrackAssignments.forEach(({ primer, track }) => {
-        const leftPercent = (primer.start_pos / genomeLength) * 100;
-        const widthPercent = ((primer.end_pos - primer.start_pos + 1) / genomeLength) * 100;
-        const topPx = 40 + track * (ROW_HEIGHT + ROW_GAP); // 40px clears the ruler
-
-        let bgColor = "#22c55e"; 
-        if (primer.status === "Low Risk") bgColor = "#f59e0b"; 
-        if (primer.status === "High Risk") bgColor = "#ea580c"; 
-        if (primer.status === "Failure") bgColor = "#ef4444"; 
-
-        const bar = document.createElement('div');
-        bar.style.position = "absolute";
-        bar.style.left = `${leftPercent}%`;
-        bar.style.width = `max(${widthPercent}%, 2px)`; // Min width of 2px
-        bar.style.top = `${topPx}px`;
-        bar.style.height = `${ROW_HEIGHT}px`;
-        bar.style.backgroundColor = bgColor;
-        bar.style.borderRadius = "3px";
-        bar.style.boxShadow = "0 1px 2px rgba(0,0,0,0.2)";
-        bar.style.overflow = "hidden";
-        bar.style.display = "flex";
-        bar.style.alignItems = "center";
-        
-        const arrow = primer.is_forward ? "➔ " : "⬅ ";
-        bar.innerHTML = `<span style="font-size: 10px; color: white; font-weight: bold; white-space: nowrap; padding-left: 4px;">${arrow}${primer.primer_id}</span>`;
-        bar.title = `Primer: ${primer.primer_id}\nPos: ${primer.start_pos.toLocaleString()} - ${primer.end_pos.toLocaleString()} bp\nStatus: ${primer.status}\nMismatches: ${primer.mismatches}`;
-
-        // Mismatch Markers
-        if (primer.alignment && primer.alignment.includes('[')) {
-            let baseIndex = 0; let i = 0;
-            const primerLen = primer.end_pos - primer.start_pos + 1;
-            while (i < primer.alignment.length) {
-                if (primer.alignment[i] === '[') {
-                    const marker = document.createElement('div');
-                    marker.style.position = "absolute";
-                    marker.style.left = `${(baseIndex / primerLen) * 100}%`;
-                    marker.style.top = "0px";
-                    marker.style.width = "2px"; 
-                    marker.style.height = "100%";
-                    marker.style.backgroundColor = "#000000"; 
-                    bar.appendChild(marker);
-                    i += 3; baseIndex++;
-                } else {
-                    baseIndex++; i++;
-                }
-            }
-        }
-        canvas.appendChild(bar);
-    });
-
-    viewport.appendChild(canvas);
-    mapContainer.appendChild(viewport);
-
-    // -----------------------------------------
-    // E. EVENT LISTENERS (Zoom & Pan)
-    // -----------------------------------------
-    drawRuler(); // Draw initial ruler
-
-    // Zooming (Ctrl + Scroll)
-    viewport.addEventListener('wheel', (e) => {
-        if (!e.ctrlKey && !e.metaKey) return; 
-        e.preventDefault(); 
-
-        const zoomDelta = e.deltaY > 0 ? 0.8 : 1.25; 
-        currentZoom = Math.max(1.0, Math.min(currentZoom * zoomDelta, 50.0)); 
-
-        // Physically widen the canvas. The %-based left/width of primers auto-scale!
-        canvas.style.width = `${baseCanvasWidth * currentZoom}px`;
-        
-        drawRuler(); 
-    }, { passive: false });
-
-    // Panning (Click & Drag)
+    // 5. User Interaction (Zoom and Pan)
     let isDragging = false;
-    let startX: number, startY: number;
-    let scrollLeft: number, scrollTop: number;
+    let lastX = 0, lastY = 0;
 
-    viewport.addEventListener('mousedown', (e) => {
+    canvas.addEventListener('mousedown', (e) => {
         isDragging = true;
-        viewport.style.cursor = "grabbing";
-        startX = e.pageX - viewport.offsetLeft;
-        startY = e.pageY - viewport.offsetTop;
-        scrollLeft = viewport.scrollLeft;
-        scrollTop = viewport.scrollTop;
+        canvas.style.cursor = "grabbing";
+        lastX = e.offsetX;
+        lastY = e.offsetY;
     });
 
-    viewport.addEventListener('mouseleave', () => {
+    window.addEventListener('mouseup', () => {
         isDragging = false;
-        viewport.style.cursor = "grab";
+        canvas.style.cursor = "grab";
     });
 
-    viewport.addEventListener('mouseup', () => {
-        isDragging = false;
-        viewport.style.cursor = "grab";
-    });
-
-    viewport.addEventListener('mousemove', (e) => {
+    window.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
+        
+        const deltaX = e.offsetX - lastX;
+        const deltaY = e.offsetY - lastY;
+        
+        panX -= deltaX / zoom;
+        panY -= deltaY;
+
+        // Boundaries
+        const maxPanY = Math.max(0, (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) - height + RULER_HEIGHT + 50);
+        if (panX < 0) panX = 0;
+        if (panX > genomeLength - (width / zoom)) panX = genomeLength - (width / zoom);
+        if (panY < 0) panY = 0;
+        if (panY > maxPanY) panY = maxPanY;
+
+        lastX = e.offsetX;
+        lastY = e.offsetY;
+        
+        requestAnimationFrame(render);
+    });
+
+    canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
         
-        const x = e.pageX - viewport.offsetLeft;
-        const y = e.pageY - viewport.offsetTop;
-        const walkX = (x - startX);
-        const walkY = (y - startY);
+        // Trackpad panning (horizontal/vertical)
+        if (!e.ctrlKey && !e.metaKey && (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) > 0)) {
+            panX += e.deltaX / zoom;
+            panY += e.deltaY;
+            
+            const maxPanY = Math.max(0, (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) - height + RULER_HEIGHT + 50);
+            if (panX < 0) panX = 0;
+            if (panX > genomeLength - (width / zoom)) panX = genomeLength - (width / zoom);
+            if (panY < 0) panY = 0;
+            if (panY > maxPanY) panY = maxPanY;
+            
+            requestAnimationFrame(render);
+            return;
+        }
+
+        // Zooming (Ctrl/Cmd + Scroll)
+        const mouseX = e.offsetX;
+        const bpUnderMouse = panX + (mouseX / zoom);
         
-        viewport.scrollLeft = scrollLeft - walkX;
-        viewport.scrollTop = scrollTop - walkY;
-    });
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1; // Slower, smoother zoom
+        zoom = Math.max(width / genomeLength, Math.min(zoom * zoomFactor, 30)); 
+        
+        // Adjust panX so the cursor stays on the exact same base pair
+        panX = bpUnderMouse - (mouseX / zoom);
+        
+        if (panX < 0) panX = 0;
+        if (panX > genomeLength - (width / zoom)) panX = Math.max(0, genomeLength - (width / zoom));
+        
+        requestAnimationFrame(render);
+    }, { passive: false });
+
+    // Initial render
+    render();
 }
 
 // -----------------------------------------
