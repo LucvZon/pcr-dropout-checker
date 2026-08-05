@@ -487,7 +487,7 @@ tabBtnMap.addEventListener('click', () => {
 });
 
 // -----------------------------------------
-// PHASE 2: GENOME MAP DRAWING ENGINE
+// PHASE 2: CANVAS GENOME MAP ENGINE
 // -----------------------------------------
 function drawGenomeMap(sampleId: string) {
     mapContainer.innerHTML = ""; // Clear old map
@@ -500,67 +500,85 @@ function drawGenomeMap(sampleId: string) {
         return;
     }
 
-    // 1. Sort and pre-process mismatches for lightning-fast rendering
+    // 1. Sort and pre-process mismatches
     sampleResults.sort((a, b) => a.start_pos - b.start_pos);
     
     const parsedResults = sampleResults.map((p, index) => {
         const mismatchIndices = new Set<number>();
-        let seqIndex = 0;
-        let i = 0;
+        let seqIndex = 0; let i = 0;
         while (i < p.alignment.length) {
             if (p.alignment[i] === '[') {
                 mismatchIndices.add(seqIndex);
-                i += 3; // Skip [X]
-                seqIndex++;
-            } else {
-                i++;
-                seqIndex++;
-            }
+                i += 3; seqIndex++;
+            } else { i++; seqIndex++; }
         }
         return { ...p, track: index, mismatchIndices };
     });
 
     const genomeLength = fullSampleSeq.length;
-
-    // 2. Setup the Canvas and DPI scaling
-    const canvas = document.createElement('canvas');
-    canvas.style.width = "100%";
-    canvas.style.height = "500px";
-    canvas.style.cursor = "grab";
-    canvas.style.borderRadius = "6px";
-    mapContainer.appendChild(canvas);
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let width = canvas.clientWidth;
-    let height = canvas.clientHeight;
-    
-    // Support Retina/High-DPI displays so text isn't blurry
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    // 3. State Variables
-    let zoom = width / genomeLength; // Pixels per base pair
-    let panX = 0; // Base pair at the left edge of the screen
-    let panY = 0; // Vertical scroll in pixels
-    
     const ROW_HEIGHT = 20;
     const ROW_GAP = 10;
     const RULER_HEIGHT = 40;
     const REF_SEQ_HEIGHT = 25; // Extra height for reference sequence when zoomed in
     const ZOOM_THRESHOLD = 12; // When zoom > 12px per base, switch to text mode!
 
+    // Calculate total vertical height needed for all primers
+    const contentHeight = RULER_HEIGHT + REF_SEQ_HEIGHT + (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) + 50;
+
+    // 2. Setup the DOM structure for Native Scrolling
+    const wrapper = document.createElement('div');
+    wrapper.style.width = "100%";
+    wrapper.style.height = "500px";
+    wrapper.style.overflow = "auto";       // Native scrollbars!
+    wrapper.style.position = "relative";
+    wrapper.style.backgroundColor = "#f8fafc";
+    wrapper.style.borderRadius = "6px";
+    
+    // The "Spacer" forces the wrapper to have scrollbars matching the virtual genome size
+    const spacer = document.createElement('div');
+    spacer.style.position = "absolute";
+    spacer.style.top = "0px";
+    spacer.style.left = "0px";
+    spacer.style.height = `${Math.max(500, contentHeight)}px`;
+    spacer.style.zIndex = "-1"; // Hide behind canvas
+    
+    // The Canvas sticks to the top-left of the visible window
+    const canvas = document.createElement('canvas');
+    canvas.style.position = "sticky";
+    canvas.style.top = "0px";
+    canvas.style.left = "0px";
+    canvas.style.cursor = "grab";
+
+    wrapper.appendChild(spacer);
+    wrapper.appendChild(canvas);
+    mapContainer.appendChild(wrapper);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Scale canvas for high-DPI/Retina screens
+    const width = wrapper.clientWidth;
+    const height = wrapper.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.scale(dpr, dpr);
+
+    // 3. State Variables
+    let zoom = width / genomeLength; // Pixels per base pair
+    spacer.style.width = `${genomeLength * zoom}px`; // Initialize horizontal scrollbar
+
     // 4. Main Render Loop
     function render() {
         if (!ctx) return;
         
-        // Clear screen
+        // The source of truth for position is the native scrollbars
+        const panX = wrapper.scrollLeft / zoom;
+        const panY = wrapper.scrollTop;
+        
         ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = "#f8fafc";
-        ctx.fillRect(0, 0, width, height);
 
         const showText = zoom >= ZOOM_THRESHOLD;
         const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
@@ -577,32 +595,32 @@ function drawGenomeMap(sampleId: string) {
             const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
             
             // Culling: Don't draw if it's scrolled off-screen (above ruler or below canvas)
-            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) return;
+            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) return; // Vertical Cull
             
             const startX = (primer.start_pos - 1 - panX) * zoom;
             const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
             
             // Culling: Don't draw if it's panned completely off the left or right sides
-            if (startX > width || startX + primerWidth < 0) return;
+            if (startX > width || startX + primerWidth < 0) return; // Horizontal Cull
 
             if (showText) {
-                // MICRO VIEW: Draw Sequence Text
+                // MICRO VIEW: Text
                 const seq = primer.mapped_primer_seq.toUpperCase();
                 for (let i = 0; i < seq.length; i++) {
                     const charX = startX + (i * zoom);
-                    if (charX + zoom < 0 || charX > width) continue; // Cull characters off-screen
+                    if (charX + zoom < 0 || charX > width) continue;
 
                     const isMismatch = primer.mismatchIndices.has(i);
 
                     // Draw Box
-                    ctx.fillStyle = isMismatch ? "#fee2e2" : "#e2e8f0"; // Red or Gray bg
+                    ctx.fillStyle = isMismatch ? "#fee2e2" : "#e2e8f0";
                     ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
 
                     // Draw Letter
-                    ctx.fillStyle = isMismatch ? "#dc2626" : "#475569"; // Red or Dark Gray text
+                    ctx.fillStyle = isMismatch ? "#dc2626" : "#475569";
                     ctx.fillText(seq[i], charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
                 }
-
+                
                 // Draw Primer ID to the left
                 ctx.fillStyle = "#1e293b";
                 ctx.textAlign = "right";
@@ -617,14 +635,12 @@ function drawGenomeMap(sampleId: string) {
                 if (primer.status === "Failure") color = "#ef4444"; 
 
                 ctx.fillStyle = color;
-
-                // Force a minimum width so it doesn't vanish at max zoom
-                let visualWidth = Math.max(primerWidth, 15);
+                
+                const visualWidth = Math.max(primerWidth, 15);
                 
                 // Dynamically calculate the arrowhead size (max 8px, but smaller if the box is tiny)
-                let arrowSize = Math.min(8, visualWidth * 0.5);
+                const arrowSize = Math.min(8, visualWidth * 0.5);
                 
-                // Draw a pointed polygon for orientation
                 ctx.beginPath();
                 if (primer.is_forward) {
                     ctx.moveTo(startX, yPos);
@@ -641,24 +657,21 @@ function drawGenomeMap(sampleId: string) {
                 }
                 ctx.fill();
 
-                // Draw ID inside the bar ONLY if it comfortably fits
-                // Measure the actual width of the text to prevent overflow
                 if (visualWidth > 30) {
                     const text = primer.primer_id;
                     ctx.font = "bold 10px sans-serif";
-                    
                     const textWidth = ctx.measureText(text).width;
-                    if (visualWidth > textWidth + 10) { // 10px padding for the arrowhead
+                    if (visualWidth > textWidth + 15) {
                         ctx.fillStyle = "white";
                         ctx.textAlign = "left";
                         ctx.fillText(text, startX + (primer.is_forward ? 5 : 10), yPos + (ROW_HEIGHT / 2));
-                        ctx.textAlign = "center"; // Reset
+                        ctx.textAlign = "center";
                     }
                 }
             }
         });
 
-        // --- DRAW STICKY HEADER (Hides primers scrolling up) ---
+        // --- DRAW STICKY HEADER ---
         ctx.fillStyle = "rgba(248, 250, 252, 0.95)";
         ctx.fillRect(0, 0, width, stickyTopHeight);
         ctx.beginPath();
@@ -686,7 +699,7 @@ function drawGenomeMap(sampleId: string) {
                 // Border separator
                 ctx.strokeStyle = "#bfdbfe";
                 ctx.strokeRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
-
+                
                 // Letter
                 ctx.fillStyle = "#1e40af";
                 ctx.fillText(fullSampleSeq[i].toUpperCase(), charX + (zoom / 2), RULER_HEIGHT + (REF_SEQ_HEIGHT / 2));
@@ -698,11 +711,7 @@ function drawGenomeMap(sampleId: string) {
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         
-        // 1. Calculate a dynamic step size based on screen pixels
-        const minPixelsBetweenLabels = 100;
-        const targetBpSpacing = minPixelsBetweenLabels / zoom;
-        
-        // Find the closest "nice" number (1, 2, 5, 10, 50, 100, 1000, etc.)
+        const targetBpSpacing = 100 / zoom;
         const magnitude = Math.pow(10, Math.floor(Math.log10(targetBpSpacing || 1)));
         const residual = targetBpSpacing / magnitude;
         let majorStep = 10;
@@ -712,48 +721,47 @@ function drawGenomeMap(sampleId: string) {
         else if (residual < 7.5) majorStep = 5 * magnitude;
         else majorStep = 10 * magnitude;
 
-        // Per user request: never label smaller than 10 bp increments at max zoom
         if (majorStep < 10) majorStep = 10;
+        let minorStep = Math.max(1, majorStep / 5);
 
-        // Minor ticks between the labeled numbers
-        let minorStep = majorStep / 5;
-        if (minorStep < 1) minorStep = 1;
-
-        // 2. Draw the ticks and numbers
         const firstMinorTick = Math.floor(startBp / minorStep) * minorStep;
         
         for (let i = firstMinorTick; i <= endBp + minorStep; i += minorStep) {
-            const currentBp = Math.round(i); // Prevent floating point drift
+            const currentBp = Math.round(i);
             if (currentBp > genomeLength) break;
             
             const tickX = (currentBp - panX) * zoom;
             const isMajor = currentBp % Math.round(majorStep) === 0;
 
-            // Draw Tick Line
             ctx.beginPath();
             ctx.moveTo(tickX, RULER_HEIGHT);
-            ctx.lineTo(tickX, RULER_HEIGHT - (isMajor ? 8 : 4)); // Taller for major ticks
+            ctx.lineTo(tickX, RULER_HEIGHT - (isMajor ? 8 : 4));
             ctx.strokeStyle = isMajor ? "#475569" : "#cbd5e1";
             ctx.stroke();
 
-            // Draw Number Label
             if (isMajor) {
-                // toLocaleString adds commas (e.g., 11,250 instead of 11.2k) which is much cleaner!
-                const label = currentBp.toLocaleString();
-                ctx.fillText(label, tickX, RULER_HEIGHT - 12);
+                ctx.fillText(currentBp.toLocaleString(), tickX, RULER_HEIGHT - 12);
             }
         }
     }
 
-    // 5. User Interaction (Zoom and Pan)
+    // 5. User Interaction (Zoom, Scroll, and Pan)
+    
+    // Automatically re-render when native scrollbars move
+    wrapper.addEventListener('scroll', () => requestAnimationFrame(render));
+
+    // Custom Drag-to-Pan (synchronizes with native scrollbars!)
     let isDragging = false;
-    let lastX = 0, lastY = 0;
+    let startX = 0, startY = 0;
+    let startScrollLeft = 0, startScrollTop = 0;
 
     canvas.addEventListener('mousedown', (e) => {
         isDragging = true;
         canvas.style.cursor = "grabbing";
-        lastX = e.offsetX;
-        lastY = e.offsetY;
+        startX = e.pageX;
+        startY = e.pageY;
+        startScrollLeft = wrapper.scrollLeft;
+        startScrollTop = wrapper.scrollTop;
     });
 
     window.addEventListener('mouseup', () => {
@@ -763,56 +771,30 @@ function drawGenomeMap(sampleId: string) {
 
     window.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
+        const dx = e.pageX - startX;
+        const dy = e.pageY - startY;
         
-        const deltaX = e.offsetX - lastX;
-        const deltaY = e.offsetY - lastY;
-        
-        panX -= deltaX / zoom;
-        panY -= deltaY;
-
-        // Boundaries
-        const maxPanY = Math.max(0, (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) - height + RULER_HEIGHT + 50);
-        if (panX < 0) panX = 0;
-        if (panX > genomeLength - (width / zoom)) panX = genomeLength - (width / zoom);
-        if (panY < 0) panY = 0;
-        if (panY > maxPanY) panY = maxPanY;
-
-        lastX = e.offsetX;
-        lastY = e.offsetY;
-        
-        requestAnimationFrame(render);
+        // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders!
+        wrapper.scrollLeft = startScrollLeft - dx;
+        wrapper.scrollTop = startScrollTop - dy;
     });
 
-    canvas.addEventListener('wheel', (e) => {
+    // Zooming (Ctrl/Cmd + Scroll)
+    wrapper.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey && !e.metaKey) return; // Allow normal native scrolling if no modifier key is pressed
         e.preventDefault();
         
-        // Trackpad panning (horizontal/vertical)
-        if (!e.ctrlKey && !e.metaKey && (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) > 0)) {
-            panX += e.deltaX / zoom;
-            panY += e.deltaY;
-            
-            const maxPanY = Math.max(0, (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) - height + RULER_HEIGHT + 50);
-            if (panX < 0) panX = 0;
-            if (panX > genomeLength - (width / zoom)) panX = genomeLength - (width / zoom);
-            if (panY < 0) panY = 0;
-            if (panY > maxPanY) panY = maxPanY;
-            
-            requestAnimationFrame(render);
-            return;
-        }
-
-        // Zooming (Ctrl/Cmd + Scroll)
-        const mouseX = e.offsetX;
-        const bpUnderMouse = panX + (mouseX / zoom);
+        const mouseX = e.offsetX; // Mouse X relative to canvas
+        const bpUnderMouse = (wrapper.scrollLeft + mouseX) / zoom;
         
-        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1; // Slower, smoother zoom
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
         zoom = Math.max(width / genomeLength, Math.min(zoom * zoomFactor, 30)); 
         
-        // Adjust panX so the cursor stays on the exact same base pair
-        panX = bpUnderMouse - (mouseX / zoom);
+        // Stretch the invisible spacer to match the new zoom level
+        spacer.style.width = `${genomeLength * zoom}px`;
         
-        if (panX < 0) panX = 0;
-        if (panX > genomeLength - (width / zoom)) panX = Math.max(0, genomeLength - (width / zoom));
+        // Instantly adjust the scrollbar so the base pair under the mouse stays perfectly still
+        wrapper.scrollLeft = (bpUnderMouse * zoom) - mouseX;
         
         requestAnimationFrame(render);
     }, { passive: false });
