@@ -617,31 +617,43 @@ function drawGenomeMap(sampleId: string) {
                 if (primer.status === "Failure") color = "#ef4444"; 
 
                 ctx.fillStyle = color;
+
+                // Force a minimum width so it doesn't vanish at max zoom
+                let visualWidth = Math.max(primerWidth, 15);
+                
+                // Dynamically calculate the arrowhead size (max 8px, but smaller if the box is tiny)
+                let arrowSize = Math.min(8, visualWidth * 0.5);
                 
                 // Draw a pointed polygon for orientation
                 ctx.beginPath();
                 if (primer.is_forward) {
                     ctx.moveTo(startX, yPos);
-                    ctx.lineTo(startX + primerWidth - 10, yPos);
-                    ctx.lineTo(startX + primerWidth, yPos + (ROW_HEIGHT / 2));
-                    ctx.lineTo(startX + primerWidth - 10, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX + visualWidth - arrowSize, yPos);
+                    ctx.lineTo(startX + visualWidth, yPos + (ROW_HEIGHT / 2));
+                    ctx.lineTo(startX + visualWidth - arrowSize, yPos + ROW_HEIGHT);
                     ctx.lineTo(startX, yPos + ROW_HEIGHT);
                 } else {
-                    ctx.moveTo(startX + primerWidth, yPos);
-                    ctx.lineTo(startX + 10, yPos);
+                    ctx.moveTo(startX + visualWidth, yPos);
+                    ctx.lineTo(startX + arrowSize, yPos);
                     ctx.lineTo(startX, yPos + (ROW_HEIGHT / 2));
-                    ctx.lineTo(startX + 10, yPos + ROW_HEIGHT);
-                    ctx.lineTo(startX + primerWidth, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX + arrowSize, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX + visualWidth, yPos + ROW_HEIGHT);
                 }
                 ctx.fill();
 
-                // Draw ID inside the bar if it fits
-                if (primerWidth > 60) {
-                    ctx.fillStyle = "white";
+                // Draw ID inside the bar ONLY if it comfortably fits
+                // Measure the actual width of the text to prevent overflow
+                if (visualWidth > 30) {
+                    const text = primer.primer_id;
                     ctx.font = "bold 10px sans-serif";
-                    ctx.textAlign = "left";
-                    ctx.fillText(primer.primer_id, startX + (primer.is_forward ? 5 : 15), yPos + (ROW_HEIGHT / 2));
-                    ctx.textAlign = "center"; // Reset
+                    
+                    const textWidth = ctx.measureText(text).width;
+                    if (visualWidth > textWidth + 10) { // 10px padding for the arrowhead
+                        ctx.fillStyle = "white";
+                        ctx.textAlign = "left";
+                        ctx.fillText(text, startX + (primer.is_forward ? 5 : 10), yPos + (ROW_HEIGHT / 2));
+                        ctx.textAlign = "center"; // Reset
+                    }
                 }
             }
         });
