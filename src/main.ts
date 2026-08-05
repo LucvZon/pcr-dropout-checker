@@ -487,209 +487,423 @@ tabBtnMap.addEventListener('click', () => {
 });
 
 // -----------------------------------------
-// PHASE 2: GENOME MAP DRAWING ENGINE
+// PHASE 2: CANVAS GENOME MAP ENGINE
 // -----------------------------------------
 function drawGenomeMap(sampleId: string) {
     mapContainer.innerHTML = ""; // Clear old map
 
-    const sampleResults = allResults.filter(
-        r => r.sample_id === sampleId && r.start_pos > 0
-    );
-
-    if (sampleResults.length === 0) {
+    const sampleResults = allResults.filter(r => r.sample_id === sampleId && r.start_pos > 0);
+    const fullSampleSeq = sampleSequences.get(sampleId) || "";
+    
+    if (sampleResults.length === 0 || !fullSampleSeq) {
         mapContainer.innerHTML = `<p style="text-align: center; color: #9ca3af; padding: 50px;">No valid primer alignments found for this sample.</p>`;
         return;
     }
 
-    const genomeLength = sampleResults[0].sample_length;
-    let currentZoom = 1.0;
+    // 1. Sort and pre-process mismatches
+    sampleResults.sort((a, b) => a.start_pos - b.start_pos);
     
-    // We base the initial canvas width on the container's actual size on screen
-    const baseCanvasWidth = Math.max(1000, mapContainer.clientWidth - 40);
+    const parsedResults = sampleResults.map((p, index) => {
+        const mismatchIndices = new Set<number>();
+        let seqIndex = 0; let i = 0;
+        while (i < p.alignment.length) {
+            if (p.alignment[i] === '[') {
+                mismatchIndices.add(seqIndex);
+                i += 3; seqIndex++;
+            } else { i++; seqIndex++; }
+        }
+        return { ...p, track: index, mismatchIndices };
+    });
 
-    // -----------------------------------------
-    // A. INTERACTIVE WRAPPER (The Viewport)
-    // -----------------------------------------
-    const viewport = document.createElement('div');
-    viewport.style.width = "100%";
-    viewport.style.height = "500px"; // Fixed height keeps the UI clean
-    viewport.style.overflow = "auto"; // Provides the scrollbars
-    viewport.style.position = "relative";
-    viewport.style.cursor = "grab";
-    viewport.style.border = "1px solid #e5e7eb";
-    viewport.style.backgroundColor = "#f8fafc";
-    viewport.style.borderRadius = "6px";
+    const genomeLength = fullSampleSeq.length;
+    const ROW_HEIGHT = 20;
+    const ROW_GAP = 10;
+    const RULER_HEIGHT = 40;
+    const REF_SEQ_HEIGHT = 25; // Extra height for reference sequence when zoomed in
+    const ZOOM_THRESHOLD = 12; // When zoom > 12px per base, switch to text mode!
 
-    const canvas = document.createElement('div');
-    canvas.style.position = "absolute";
+    // Calculate total vertical height needed for all primers
+    const contentHeight = RULER_HEIGHT + REF_SEQ_HEIGHT + (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) + 50;
+
+    // 2. Setup the DOM structure for Native Scrolling
+    const wrapper = document.createElement('div');
+    wrapper.style.width = "100%";
+    wrapper.style.height = "500px";
+    wrapper.style.overflow = "auto";       // Native scrollbars!
+    wrapper.style.position = "relative";
+    wrapper.style.backgroundColor = "#f8fafc";
+    wrapper.style.borderRadius = "6px";
+    
+    // The "Spacer" forces the wrapper to have scrollbars matching the virtual genome size
+    const spacer = document.createElement('div');
+    spacer.style.position = "absolute";
+    spacer.style.top = "0px";
+    spacer.style.left = "0px";
+    spacer.style.height = `${Math.max(500, contentHeight)}px`;
+    spacer.style.zIndex = "-1"; // Hide behind canvas
+    
+    // The Canvas sticks to the top-left of the visible window
+    const canvas = document.createElement('canvas');
+    canvas.style.position = "sticky";
     canvas.style.top = "0px";
     canvas.style.left = "0px";
-    canvas.style.width = `${baseCanvasWidth}px`;
-    // Space for ruler (40px) + space for all rows
-    const ROW_HEIGHT = 28;
-    const ROW_GAP = 8;
-    canvas.style.height = `${60 + sampleResults.length * (ROW_HEIGHT + ROW_GAP)}px`; 
+    canvas.style.cursor = "grab";
 
-    // -----------------------------------------
-    // B. DYNAMIC RULER
-    // -----------------------------------------
-    const ruler = document.createElement('div');
-    ruler.style.position = "absolute";
-    ruler.style.top = "0px";
-    ruler.style.left = "0px";
-    ruler.style.width = "100%";
-    ruler.style.height = "30px";
-    ruler.style.borderBottom = "2px solid #64748b";
-    ruler.style.backgroundColor = "rgba(248, 250, 252, 0.9)"; // Slight transparency
-    ruler.style.zIndex = "10";
-    canvas.appendChild(ruler);
+    wrapper.appendChild(spacer);
+    wrapper.appendChild(canvas);
+    mapContainer.appendChild(wrapper);
 
-    function drawRuler() {
-        ruler.innerHTML = ""; // Clear old ticks
+
+    // --- SETUP TOOLTIP ---
+    const tooltip = document.createElement('div');
+    tooltip.style.position = "fixed"; // Fixed prevents container overflow issues
+    tooltip.style.display = "none";
+    tooltip.style.backgroundColor = "rgba(17, 24, 39, 0.95)"; // Dark gray/black
+    tooltip.style.color = "#f9fafb";
+    tooltip.style.padding = "12px";
+    tooltip.style.borderRadius = "8px";
+    tooltip.style.fontSize = "13px";
+    tooltip.style.pointerEvents = "none"; // Let mouse events pass through to canvas
+    tooltip.style.zIndex = "1000";
+    tooltip.style.boxShadow = "0 10px 15px -3px rgba(0, 0, 0, 0.5)";
+    tooltip.style.whiteSpace = "nowrap";
+    tooltip.style.lineHeight = "1.5";
+    wrapper.appendChild(tooltip); // Will be destroyed automatically when map is cleared
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Scale canvas for high-DPI/Retina screens
+    const width = wrapper.clientWidth;
+    const height = wrapper.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.scale(dpr, dpr);
+
+    // 3. State Variables
+    let zoom = width / genomeLength; // Pixels per base pair
+    spacer.style.width = `${genomeLength * zoom}px`; // Initialize horizontal scrollbar
+
+    // 4. Main Render Loop
+    function render() {
+        if (!ctx) return;
         
-        // Dynamically adjust number of ticks based on zoom level (max 100 ticks)
-        let tickCount = Math.max(5, Math.floor(10 * currentZoom));
-        if (tickCount > 100) tickCount = 100; 
+        // The source of truth for position is the native scrollbars
+        const panX = wrapper.scrollLeft / zoom;
+        const panY = wrapper.scrollTop;
+        
+        ctx.clearRect(0, 0, width, height);
 
-        for (let i = 0; i <= tickCount; i++) {
-            const bpLocation = Math.round((genomeLength / tickCount) * i);
-            const leftPercent = (i / tickCount) * 100;
+        const showText = zoom >= ZOOM_THRESHOLD;
+        const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
+        
+        const startBp = panX;
+        const endBp = panX + (width / zoom);
 
-            const tick = document.createElement('div');
-            tick.style.position = "absolute";
-            tick.style.left = `${leftPercent}%`;
-            tick.style.top = "10px";
-            tick.style.height = "20px";
-            tick.style.borderLeft = "1px solid #94a3b8";
-            tick.style.fontSize = "11px";
-            tick.style.color = "#64748b";
-            tick.style.paddingLeft = "3px";
+        // --- DRAW PRIMERS ---
+        ctx.font = "bold 14px monospace";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "center";
+
+        parsedResults.forEach(primer => {
+            const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
             
-            // Format number neatly (e.g., 15.2k bp)
-            tick.innerText = bpLocation > 1000 ? `${(bpLocation/1000).toFixed(1)}k` : `${bpLocation}`;
-            ruler.appendChild(tick);
+            // Culling: Don't draw if it's scrolled off-screen (above ruler or below canvas)
+            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) return; // Vertical Cull
+            
+            const startX = (primer.start_pos - 1 - panX) * zoom;
+            const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
+            
+            // Culling: Don't draw if it's panned completely off the left or right sides
+            if (startX > width || startX + primerWidth < 0) return; // Horizontal Cull
+
+            if (showText) {
+                // MICRO VIEW: Text
+                const seq = primer.mapped_primer_seq.toUpperCase();
+                for (let i = 0; i < seq.length; i++) {
+                    const charX = startX + (i * zoom);
+                    if (charX + zoom < 0 || charX > width) continue;
+
+                    const isMismatch = primer.mismatchIndices.has(i);
+
+                    // Draw Box
+                    ctx.fillStyle = isMismatch ? "#fee2e2" : "#e2e8f0";
+                    ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
+
+                    // Draw Letter
+                    ctx.fillStyle = isMismatch ? "#dc2626" : "#475569";
+                    ctx.fillText(seq[i], charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
+                }
+                
+                // Draw Primer ID to the left
+                ctx.fillStyle = "#1e293b";
+                ctx.textAlign = "right";
+                ctx.fillText((primer.is_forward ? "➔ " : "⬅ ") + primer.primer_id, startX - 10, yPos + (ROW_HEIGHT / 2));
+                ctx.textAlign = "center"; // Reset
+
+            } else {
+                // MACRO VIEW: Draw Polygons
+                let color = "#22c55e"; 
+                if (primer.status === "Low Risk") color = "#f59e0b"; 
+                if (primer.status === "High Risk") color = "#ea580c"; 
+                if (primer.status === "Failure") color = "#ef4444"; 
+
+                ctx.fillStyle = color;
+                
+                const visualWidth = Math.max(primerWidth, 15);
+                
+                // Dynamically calculate the arrowhead size (max 8px, but smaller if the box is tiny)
+                const arrowSize = Math.min(8, visualWidth * 0.5);
+                
+                ctx.beginPath();
+                if (primer.is_forward) {
+                    ctx.moveTo(startX, yPos);
+                    ctx.lineTo(startX + visualWidth - arrowSize, yPos);
+                    ctx.lineTo(startX + visualWidth, yPos + (ROW_HEIGHT / 2));
+                    ctx.lineTo(startX + visualWidth - arrowSize, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX, yPos + ROW_HEIGHT);
+                } else {
+                    ctx.moveTo(startX + visualWidth, yPos);
+                    ctx.lineTo(startX + arrowSize, yPos);
+                    ctx.lineTo(startX, yPos + (ROW_HEIGHT / 2));
+                    ctx.lineTo(startX + arrowSize, yPos + ROW_HEIGHT);
+                    ctx.lineTo(startX + visualWidth, yPos + ROW_HEIGHT);
+                }
+                ctx.fill();
+
+                if (visualWidth > 30) {
+                    const text = primer.primer_id;
+                    ctx.font = "bold 10px sans-serif";
+                    const textWidth = ctx.measureText(text).width;
+                    if (visualWidth > textWidth + 15) {
+                        ctx.fillStyle = "white";
+                        ctx.textAlign = "left";
+                        ctx.fillText(text, startX + (primer.is_forward ? 5 : 10), yPos + (ROW_HEIGHT / 2));
+                        ctx.textAlign = "center";
+                    }
+                }
+            }
+        });
+
+        // --- DRAW STICKY HEADER ---
+        ctx.fillStyle = "rgba(248, 250, 252, 0.95)";
+        ctx.fillRect(0, 0, width, stickyTopHeight);
+        ctx.beginPath();
+        ctx.moveTo(0, stickyTopHeight);
+        ctx.lineTo(width, stickyTopHeight);
+        ctx.strokeStyle = "#94a3b8";
+        ctx.stroke();
+
+        // --- DRAW REFERENCE SEQUENCE ---
+        if (showText) {
+            ctx.font = "bold 14px monospace";
+            ctx.textBaseline = "middle";
+            ctx.textAlign = "center";
+            
+            const firstVisibleBp = Math.max(0, Math.floor(startBp));
+            const lastVisibleBp = Math.min(genomeLength - 1, Math.ceil(endBp));
+
+            for (let i = firstVisibleBp; i <= lastVisibleBp; i++) {
+                const charX = (i - panX) * zoom;
+                
+                // Highlight Box
+                ctx.fillStyle = "#dbeafe";
+                ctx.fillRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
+                
+                // Border separator
+                ctx.strokeStyle = "#bfdbfe";
+                ctx.strokeRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
+                
+                // Letter
+                ctx.fillStyle = "#1e40af";
+                ctx.fillText(fullSampleSeq[i].toUpperCase(), charX + (zoom / 2), RULER_HEIGHT + (REF_SEQ_HEIGHT / 2));
+            }
+        }
+
+        // --- DRAW RULER ---
+        ctx.fillStyle = "#475569";
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        
+        const targetBpSpacing = 100 / zoom;
+        const magnitude = Math.pow(10, Math.floor(Math.log10(targetBpSpacing || 1)));
+        const residual = targetBpSpacing / magnitude;
+        let majorStep = 10;
+        
+        if (residual < 1.5) majorStep = 1 * magnitude;
+        else if (residual < 3.5) majorStep = 2 * magnitude;
+        else if (residual < 7.5) majorStep = 5 * magnitude;
+        else majorStep = 10 * magnitude;
+
+        if (majorStep < 10) majorStep = 10;
+        let minorStep = Math.max(1, majorStep / 5);
+
+        const firstMinorTick = Math.floor(startBp / minorStep) * minorStep;
+        
+        for (let i = firstMinorTick; i <= endBp + minorStep; i += minorStep) {
+            const currentBp = Math.round(i);
+            if (currentBp > genomeLength) break;
+            
+            const tickX = (currentBp - panX) * zoom;
+            const isMajor = currentBp % Math.round(majorStep) === 0;
+
+            ctx.beginPath();
+            ctx.moveTo(tickX, RULER_HEIGHT);
+            ctx.lineTo(tickX, RULER_HEIGHT - (isMajor ? 8 : 4));
+            ctx.strokeStyle = isMajor ? "#475569" : "#cbd5e1";
+            ctx.stroke();
+
+            if (isMajor) {
+                ctx.fillText(currentBp.toLocaleString(), tickX, RULER_HEIGHT - 12);
+            }
         }
     }
 
-    // -----------------------------------------
-    // C. Y-AXIS STAGGERING (1 Primer Per Row)
-    // -----------------------------------------
-    sampleResults.sort((a, b) => a.start_pos - b.start_pos);
-    const primerTrackAssignments = sampleResults.map((p, index) => {
-        return { primer: p, track: index };
+    // 5. User Interaction (Zoom, Scroll, and Pan)
+    
+    // Automatically re-render when native scrollbars move
+    wrapper.addEventListener('scroll', () => requestAnimationFrame(render));
+
+    // Custom Drag-to-Pan (synchronizes with native scrollbars!)
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let startScrollLeft = 0, startScrollTop = 0;
+
+    canvas.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        canvas.style.cursor = "grabbing";
+        startX = e.pageX;
+        startY = e.pageY;
+        startScrollLeft = wrapper.scrollLeft;
+        startScrollTop = wrapper.scrollTop;
     });
 
-    // -----------------------------------------
-    // D. DRAW PRIMER BARS & MISMATCH MARKERS
-    // -----------------------------------------
-    primerTrackAssignments.forEach(({ primer, track }) => {
-        const leftPercent = (primer.start_pos / genomeLength) * 100;
-        const widthPercent = ((primer.end_pos - primer.start_pos + 1) / genomeLength) * 100;
-        const topPx = 40 + track * (ROW_HEIGHT + ROW_GAP); // 40px clears the ruler
+    // --- HOVER TOOLTIP LOGIC ---
+    canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            tooltip.style.display = "none";
+            return;
+        }
 
-        let bgColor = "#22c55e"; 
-        if (primer.status === "Low Risk") bgColor = "#f59e0b"; 
-        if (primer.status === "High Risk") bgColor = "#ea580c"; 
-        if (primer.status === "Failure") bgColor = "#ef4444"; 
+        const mouseX = e.offsetX;
+        const mouseY = e.offsetY;
 
-        const bar = document.createElement('div');
-        bar.style.position = "absolute";
-        bar.style.left = `${leftPercent}%`;
-        bar.style.width = `max(${widthPercent}%, 2px)`; // Min width of 2px
-        bar.style.top = `${topPx}px`;
-        bar.style.height = `${ROW_HEIGHT}px`;
-        bar.style.backgroundColor = bgColor;
-        bar.style.borderRadius = "3px";
-        bar.style.boxShadow = "0 1px 2px rgba(0,0,0,0.2)";
-        bar.style.overflow = "hidden";
-        bar.style.display = "flex";
-        bar.style.alignItems = "center";
-        
-        const arrow = primer.is_forward ? "➔ " : "⬅ ";
-        bar.innerHTML = `<span style="font-size: 10px; color: white; font-weight: bold; white-space: nowrap; padding-left: 4px;">${arrow}${primer.primer_id}</span>`;
-        bar.title = `Primer: ${primer.primer_id}\nPos: ${primer.start_pos.toLocaleString()} - ${primer.end_pos.toLocaleString()} bp\nStatus: ${primer.status}\nMismatches: ${primer.mismatches}`;
+        // Current scroll state
+        const panX = wrapper.scrollLeft / zoom;
+        const panY = wrapper.scrollTop;
+        const showText = zoom >= ZOOM_THRESHOLD;
+        const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
 
-        // Mismatch Markers
-        if (primer.alignment && primer.alignment.includes('[')) {
-            let baseIndex = 0; let i = 0;
-            const primerLen = primer.end_pos - primer.start_pos + 1;
-            while (i < primer.alignment.length) {
-                if (primer.alignment[i] === '[') {
-                    const marker = document.createElement('div');
-                    marker.style.position = "absolute";
-                    marker.style.left = `${(baseIndex / primerLen) * 100}%`;
-                    marker.style.top = "0px";
-                    marker.style.width = "2px"; 
-                    marker.style.height = "100%";
-                    marker.style.backgroundColor = "#000000"; 
-                    bar.appendChild(marker);
-                    i += 3; baseIndex++;
-                } else {
-                    baseIndex++; i++;
-                }
+        // Don't show tooltip if hovering over the sticky ruler/reference area
+        if (mouseY < stickyTopHeight) {
+            tooltip.style.display = "none";
+            canvas.style.cursor = "grab";
+            return;
+        }
+
+        let hoveredPrimer = null;
+
+        // Loop through primers to see if mouse is inside their coordinates
+        for (const primer of parsedResults) {
+            const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
+            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) continue;
+
+            const startX = (primer.start_pos - 1 - panX) * zoom;
+            const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
+            
+            // Use the same visualWidth math used for drawing to ensure the hitbox matches the graphics
+            const visualWidth = Math.max(primerWidth, 15);
+
+            if (mouseX >= startX && mouseX <= startX + visualWidth &&
+                mouseY >= yPos && mouseY <= yPos + ROW_HEIGHT) {
+                hoveredPrimer = primer;
+                break;
             }
         }
-        canvas.appendChild(bar);
+
+        if (hoveredPrimer) {
+            // Determine status color for tooltip text
+            let color = "#4ade80"; // Bright Green
+            if (hoveredPrimer.status === "Low Risk") color = "#fbbf24"; // Amber
+            if (hoveredPrimer.status === "High Risk") color = "#f97316"; // Orange
+            if (hoveredPrimer.status === "Failure") color = "#f87171"; // Red
+
+            // Populate Tooltip
+            tooltip.innerHTML = `
+                <div style="margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">
+                    <strong style="font-size: 15px;">${hoveredPrimer.primer_id}</strong>
+                </div>
+                <div><strong>Position:</strong> ${hoveredPrimer.start_pos.toLocaleString()} - ${hoveredPrimer.end_pos.toLocaleString()} bp</div>
+                <div><strong>Direction:</strong> ${hoveredPrimer.is_forward ? 'Forward ➔' : 'Reverse ⬅'}</div>
+                <div><strong>Status:</strong> <span style="color: ${color}; font-weight: bold;">${hoveredPrimer.status}</span></div>
+                <div><strong>Mismatches:</strong> ${hoveredPrimer.mismatches}</div>
+            `;
+            
+            // Position tooltip relative to the actual screen (clientX/Y) so it doesn't clip
+            let leftPos = e.clientX + 15;
+            let topPos = e.clientY + 15;
+            
+            // Prevent tooltip from flying off the right side of the screen
+            if (leftPos + 200 > window.innerWidth) {
+                leftPos = e.clientX - 215;
+            }
+
+            tooltip.style.left = `${leftPos}px`;
+            tooltip.style.top = `${topPos}px`;
+            tooltip.style.display = "block";
+            
+            canvas.style.cursor = "pointer"; // Change cursor to indicate it's interactive
+        } else {
+            tooltip.style.display = "none";
+            canvas.style.cursor = "grab";
+        }
     });
 
-    viewport.appendChild(canvas);
-    mapContainer.appendChild(viewport);
-
-    // -----------------------------------------
-    // E. EVENT LISTENERS (Zoom & Pan)
-    // -----------------------------------------
-    drawRuler(); // Draw initial ruler
-
-    // Zooming (Ctrl + Scroll)
-    viewport.addEventListener('wheel', (e) => {
-        if (!e.ctrlKey && !e.metaKey) return; 
-        e.preventDefault(); 
-
-        const zoomDelta = e.deltaY > 0 ? 0.8 : 1.25; 
-        currentZoom = Math.max(1.0, Math.min(currentZoom * zoomDelta, 50.0)); 
-
-        // Physically widen the canvas. The %-based left/width of primers auto-scale!
-        canvas.style.width = `${baseCanvasWidth * currentZoom}px`;
-        
-        drawRuler(); 
-    }, { passive: false });
-
-    // Panning (Click & Drag)
-    let isDragging = false;
-    let startX: number, startY: number;
-    let scrollLeft: number, scrollTop: number;
-
-    viewport.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        viewport.style.cursor = "grabbing";
-        startX = e.pageX - viewport.offsetLeft;
-        startY = e.pageY - viewport.offsetTop;
-        scrollLeft = viewport.scrollLeft;
-        scrollTop = viewport.scrollTop;
+    // Hide tooltip if the mouse leaves the canvas entirely
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.display = "none";
     });
 
-    viewport.addEventListener('mouseleave', () => {
+    window.addEventListener('mouseup', () => {
         isDragging = false;
-        viewport.style.cursor = "grab";
+        canvas.style.cursor = "grab";
     });
 
-    viewport.addEventListener('mouseup', () => {
-        isDragging = false;
-        viewport.style.cursor = "grab";
-    });
-
-    viewport.addEventListener('mousemove', (e) => {
+    window.addEventListener('mousemove', (e) => {
         if (!isDragging) return;
+        const dx = e.pageX - startX;
+        const dy = e.pageY - startY;
+        
+        // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders
+        wrapper.scrollLeft = startScrollLeft - dx;
+        wrapper.scrollTop = startScrollTop - dy;
+    });
+
+    // Zooming (Ctrl/Cmd + Scroll)
+    wrapper.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey && !e.metaKey) return; // Allow normal native scrolling if no modifier key is pressed
         e.preventDefault();
         
-        const x = e.pageX - viewport.offsetLeft;
-        const y = e.pageY - viewport.offsetTop;
-        const walkX = (x - startX);
-        const walkY = (y - startY);
+        const mouseX = e.offsetX; // Mouse X relative to canvas
+        const bpUnderMouse = (wrapper.scrollLeft + mouseX) / zoom;
         
-        viewport.scrollLeft = scrollLeft - walkX;
-        viewport.scrollTop = scrollTop - walkY;
-    });
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        zoom = Math.max(width / genomeLength, Math.min(zoom * zoomFactor, 30)); 
+        
+        // Stretch the invisible spacer to match the new zoom level
+        spacer.style.width = `${genomeLength * zoom}px`;
+        
+        // Instantly adjust the scrollbar so the base pair under the mouse stays perfectly still
+        wrapper.scrollLeft = (bpUnderMouse * zoom) - mouseX;
+        
+        requestAnimationFrame(render);
+    }, { passive: false });
+
+    // Initial render
+    render();
 }
 
 // -----------------------------------------
