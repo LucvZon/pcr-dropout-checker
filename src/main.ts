@@ -553,6 +553,23 @@ function drawGenomeMap(sampleId: string) {
     wrapper.appendChild(canvas);
     mapContainer.appendChild(wrapper);
 
+
+    // --- SETUP TOOLTIP ---
+    const tooltip = document.createElement('div');
+    tooltip.style.position = "fixed"; // Fixed prevents container overflow issues
+    tooltip.style.display = "none";
+    tooltip.style.backgroundColor = "rgba(17, 24, 39, 0.95)"; // Dark gray/black
+    tooltip.style.color = "#f9fafb";
+    tooltip.style.padding = "12px";
+    tooltip.style.borderRadius = "8px";
+    tooltip.style.fontSize = "13px";
+    tooltip.style.pointerEvents = "none"; // Let mouse events pass through to canvas
+    tooltip.style.zIndex = "1000";
+    tooltip.style.boxShadow = "0 10px 15px -3px rgba(0, 0, 0, 0.5)";
+    tooltip.style.whiteSpace = "nowrap";
+    tooltip.style.lineHeight = "1.5";
+    wrapper.appendChild(tooltip); // Will be destroyed automatically when map is cleared
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -764,6 +781,92 @@ function drawGenomeMap(sampleId: string) {
         startScrollTop = wrapper.scrollTop;
     });
 
+    // --- HOVER TOOLTIP LOGIC ---
+    canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            tooltip.style.display = "none";
+            return;
+        }
+
+        const mouseX = e.offsetX;
+        const mouseY = e.offsetY;
+
+        // Current scroll state
+        const panX = wrapper.scrollLeft / zoom;
+        const panY = wrapper.scrollTop;
+        const showText = zoom >= ZOOM_THRESHOLD;
+        const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
+
+        // Don't show tooltip if hovering over the sticky ruler/reference area
+        if (mouseY < stickyTopHeight) {
+            tooltip.style.display = "none";
+            canvas.style.cursor = "grab";
+            return;
+        }
+
+        let hoveredPrimer = null;
+
+        // Loop through primers to see if mouse is inside their coordinates
+        for (const primer of parsedResults) {
+            const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
+            if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) continue;
+
+            const startX = (primer.start_pos - 1 - panX) * zoom;
+            const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
+            
+            // Use the same visualWidth math used for drawing to ensure the hitbox matches the graphics
+            const visualWidth = Math.max(primerWidth, 15);
+
+            if (mouseX >= startX && mouseX <= startX + visualWidth &&
+                mouseY >= yPos && mouseY <= yPos + ROW_HEIGHT) {
+                hoveredPrimer = primer;
+                break;
+            }
+        }
+
+        if (hoveredPrimer) {
+            // Determine status color for tooltip text
+            let color = "#4ade80"; // Bright Green
+            if (hoveredPrimer.status === "Low Risk") color = "#fbbf24"; // Amber
+            if (hoveredPrimer.status === "High Risk") color = "#f97316"; // Orange
+            if (hoveredPrimer.status === "Failure") color = "#f87171"; // Red
+
+            // Populate Tooltip
+            tooltip.innerHTML = `
+                <div style="margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">
+                    <strong style="font-size: 15px;">${hoveredPrimer.primer_id}</strong>
+                </div>
+                <div><strong>Position:</strong> ${hoveredPrimer.start_pos.toLocaleString()} - ${hoveredPrimer.end_pos.toLocaleString()} bp</div>
+                <div><strong>Direction:</strong> ${hoveredPrimer.is_forward ? 'Forward ➔' : 'Reverse ⬅'}</div>
+                <div><strong>Status:</strong> <span style="color: ${color}; font-weight: bold;">${hoveredPrimer.status}</span></div>
+                <div><strong>Mismatches:</strong> ${hoveredPrimer.mismatches}</div>
+            `;
+            
+            // Position tooltip relative to the actual screen (clientX/Y) so it doesn't clip
+            let leftPos = e.clientX + 15;
+            let topPos = e.clientY + 15;
+            
+            // Prevent tooltip from flying off the right side of the screen
+            if (leftPos + 200 > window.innerWidth) {
+                leftPos = e.clientX - 215;
+            }
+
+            tooltip.style.left = `${leftPos}px`;
+            tooltip.style.top = `${topPos}px`;
+            tooltip.style.display = "block";
+            
+            canvas.style.cursor = "pointer"; // Change cursor to indicate it's interactive
+        } else {
+            tooltip.style.display = "none";
+            canvas.style.cursor = "grab";
+        }
+    });
+
+    // Hide tooltip if the mouse leaves the canvas entirely
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.display = "none";
+    });
+
     window.addEventListener('mouseup', () => {
         isDragging = false;
         canvas.style.cursor = "grab";
@@ -774,7 +877,7 @@ function drawGenomeMap(sampleId: string) {
         const dx = e.pageX - startX;
         const dy = e.pageY - startY;
         
-        // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders!
+        // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders
         wrapper.scrollLeft = startScrollLeft - dx;
         wrapper.scrollTop = startScrollTop - dy;
     });
