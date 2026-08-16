@@ -1,4 +1,5 @@
 // src/main.ts
+import './style.css';
 import ScannerWorker from './worker?worker';
 import { openUrl } from "@tauri-apps/plugin-opener";
 

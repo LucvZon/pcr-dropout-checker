@@ -20,28 +20,48 @@
         </a>
       </div>
       
-<!-- Settings -->
-      <div style="display: flex; gap: 30px; margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 6px; align-items: center;">
-        
-        <!-- Keyword Fallbacks -->
-        <div id="keyword-container" style="display: flex; gap: 20px; opacity: 0.4; pointer-events: none; transition: opacity 0.2s;">
-          <div>
-            <label style="font-weight: bold; font-size: 14px;">Forward Keyword:</label><br>
-            <input type="text" id="fwd-key" value="LEFT" style="padding: 5px; margin-top: 5px;" />
-          </div>
-          <div>
-            <label style="font-weight: bold; font-size: 14px;">Reverse Keyword:</label><br>
-            <input type="text" id="rev-key" value="RIGHT" style="padding: 5px; margin-top: 5px;" />
-          </div>
-        </div>
+        <!-- Settings -->
+        <div style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; padding: 15px; background: #f3f4f6; border-radius: 6px;">
 
-        <!-- Auto Detect Toggle -->
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <input type="checkbox" id="auto-detect-cb" style="width: 20px; height: 20px; cursor: pointer;" unchecked />
-          <label for="auto-detect-cb" style="font-weight: bold; font-size: 15px; cursor: pointer;">Auto-detect Orientation</label>
-        </div>
+          <!-- Auto Detect Toggle -->
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <label class="toggle-switch">
+              <input type="checkbox" id="auto-detect-cb">
+              <span class="toggle-slider"></span>
+            </label>
 
-      </div>
+            <label for="auto-detect-cb" style="font-weight: bold; font-size: 15px; cursor: pointer; user-select: none;">
+              Auto-detect Orientation
+            </label>
+          </div>
+
+          <!-- Keyword Fallbacks -->
+          <div
+            id="keyword-container"
+            style="display: flex; gap: 20px; opacity: 0.4; pointer-events: none; transition: opacity 0.2s;"
+          >
+            <div>
+              <label style="font-weight: bold; font-size: 14px;">Forward Keyword:</label><br>
+              <input
+                type="text"
+                id="fwd-key"
+                value="LEFT"
+                style="padding: 5px; margin-top: 5px;"
+              />
+            </div>
+
+            <div>
+              <label style="font-weight: bold; font-size: 14px;">Reverse Keyword:</label><br>
+              <input
+                type="text"
+                id="rev-key"
+                value="RIGHT"
+                style="padding: 5px; margin-top: 5px;"
+              />
+            </div>
+          </div>
+
+        </div>
 
       <!-- File Uploads -->
       <div style="display: flex; gap: 20px; margin-bottom: 20px;">
