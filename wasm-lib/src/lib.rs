@@ -142,6 +142,31 @@ fn evaluate_alignment(primer: &[u8], window: &[u8]) -> (usize, usize, bool, Stri
     (total_mismatches, critical_mismatches, absolute_3_prime_broken, alignment_str)
 }
 
+// Helper function to find the best alignment for a specific sequence
+fn find_best_alignment(p_bytes: &[u8], s_bytes: &[u8]) -> (usize, usize, bool, usize, String) {
+    let p_len = p_bytes.len();
+    let mut best_total_mismatches = usize::MAX;
+    let mut best_critical = 0;
+    let mut best_absolute_3 = false;
+    let mut best_index = 0;
+    let mut best_alignment = String::new();
+
+    for i in 0..=(s_bytes.len() - p_len) {
+        let window = &s_bytes[i..(i + p_len)];
+        let (total, crit, abs_3, aln) = evaluate_alignment(p_bytes, window);
+        
+        if total < best_total_mismatches || (total == best_total_mismatches && crit < best_critical) {
+            best_total_mismatches = total;
+            best_critical = crit;
+            best_absolute_3 = abs_3;
+            best_index = i;
+            best_alignment = aln;
+        }
+        if best_total_mismatches == 0 { break; }
+    }
+    (best_total_mismatches, best_critical, best_absolute_3, best_index, best_alignment)
+}
+
 // -----------------------------------------
 // 3. THE MAIN ENGINE (Called from Web Worker)
 // -----------------------------------------
@@ -151,104 +176,75 @@ pub fn scan_genomes(
     samples_fasta: &str,
     fwd_keyword: &str,
     rev_keyword: &str,
+    auto_detect: bool, // NEW PARAMETER
     progress_callback: &Function,
 ) -> String {
     let primers = parse_fasta(primers_fasta);
     let samples = parse_fasta(samples_fasta);
     let mut results: Vec<MatchResult> = Vec::new();
 
-    // Calculate total work for the progress bar
     let total_scans = primers.len() * samples.len();
     let mut completed_scans = 0;
 
     for (p_id, p_seq) in primers {
-        let is_forward = p_id.contains(fwd_keyword);
-        let is_reverse = p_id.contains(rev_keyword);
+        let fwd_seq = p_seq.clone();
+        let rev_seq = reverse_complement(&p_seq);
+        let fwd_bytes = fwd_seq.as_bytes();
+        let rev_bytes = rev_seq.as_bytes();
+        let p_len = fwd_bytes.len();
 
-        // If neither keyword is found, assume Forward to be safe
-        let search_seq = if is_reverse && !is_forward {
-            reverse_complement(&p_seq)
-        } else {
-            p_seq.clone()
-        };
+        let is_fwd_keyword = p_id.contains(fwd_keyword);
+        let is_rev_keyword = p_id.contains(rev_keyword);
 
-        let p_bytes = search_seq.as_bytes();
-        let p_len = p_bytes.len();
-
-        // Process Primers
         for (s_id, s_seq) in &samples {
             let s_bytes = s_seq.as_bytes();
             
-            // SAFETY CHECK 1: Is the primer empty?
-            if p_len == 0 {
-                results.push(MatchResult {
-                    sample_id: s_id.clone(),
-                    primer_id: p_id.clone(),
-                    is_forward: !is_reverse || is_forward,
-                    mismatches: 99,
-                    start_pos: 0, end_pos: 0,
-                    sample_length: s_bytes.len(),
-                    status: "Invalid Primer".to_string(),
-                    alignment: "".to_string(),
-                    mapped_primer_seq: String::from_utf8(p_bytes.to_vec()).unwrap(),
-                });
-                completed_scans += 1;
-                continue;
-            }
-
-            // SAFETY CHECK 2: Is the sample empty, or smaller than the primer?
-            if s_bytes.len() < p_len {
-                results.push(MatchResult {
-                    sample_id: s_id.clone(),
-                    primer_id: p_id.clone(),
-                    is_forward: !is_reverse || is_forward,
-                    mismatches: 99,
-                    start_pos: 0, end_pos: 0,
-                    sample_length: s_bytes.len(),
-                    status: "Not Found (Too short)".to_string(),
-                    alignment: "".to_string(),
-                    mapped_primer_seq: String::from_utf8(p_bytes.to_vec()).unwrap(),
-                });
-                completed_scans += 1;
-                continue;
-            }
-            
+            // SAFETY CHECKS
             if p_len == 0 || s_bytes.len() < p_len {
                 results.push(MatchResult {
-                    sample_id: s_id.clone(), primer_id: p_id.clone(), is_forward: !is_reverse || is_forward,
+                    sample_id: s_id.clone(), primer_id: p_id.clone(), is_forward: true,
                     mismatches: 99, start_pos: 0, end_pos: 0, sample_length: s_bytes.len(),
-                    status: "Failure".to_string(), alignment: "".to_string(),
-                    mapped_primer_seq: String::from_utf8(p_bytes.to_vec()).unwrap(),
+                    status: if p_len == 0 { "Invalid Primer" } else { "Not Found (Too short)" }.to_string(),
+                    alignment: "".to_string(),
+                    mapped_primer_seq: String::from_utf8(fwd_bytes.to_vec()).unwrap_or_default(),
                 });
                 completed_scans += 1;
                 continue;
             }
 
-            let mut best_total_mismatches = usize::MAX;
-            let mut best_critical = 0;
-            let mut best_absolute_3 = false;
-            let mut best_index = 0;
-            let mut best_alignment = String::new();
+            let is_forward;
+            let best_stats;
+            let mapped_bytes;
 
-            // Slide window across genome
-            for i in 0..=(s_bytes.len() - p_len) {
-                let window = &s_bytes[i..(i + p_len)];
+            if auto_detect {
+                // RUN BOTH STRANDS
+                let fwd_stats = find_best_alignment(fwd_bytes, s_bytes);
+                let rev_stats = find_best_alignment(rev_bytes, s_bytes);
                 
-                // Fast path: if lengths match, evaluate
-                let (total, crit, abs_3, aln) = evaluate_alignment(p_bytes, window);
-                
-                // We optimize for lowest total mismatches. 
-                // (If there is a tie, we prefer the one with fewer critical mismatches)
-                if total < best_total_mismatches || (total == best_total_mismatches && crit < best_critical) {
-                    best_total_mismatches = total;
-                    best_critical = crit;
-                    best_absolute_3 = abs_3;
-                    best_index = i;
-                    best_alignment = aln;
+                // Compare: which one has fewer total mismatches? (Tie goes to fewer critical mismatches)
+                if rev_stats.0 < fwd_stats.0 || (rev_stats.0 == fwd_stats.0 && rev_stats.1 < fwd_stats.1) {
+                    is_forward = false;
+                    best_stats = rev_stats;
+                    mapped_bytes = rev_bytes;
+                } else {
+                    is_forward = true;
+                    best_stats = fwd_stats;
+                    mapped_bytes = fwd_bytes;
                 }
-                
-                if best_total_mismatches == 0 { break; } // Perfect match found
+            } else {
+                // FALLBACK TO STRICT KEYWORDS
+                if is_rev_keyword && !is_fwd_keyword {
+                    is_forward = false;
+                    best_stats = find_best_alignment(rev_bytes, s_bytes);
+                    mapped_bytes = rev_bytes;
+                } else {
+                    is_forward = true;
+                    best_stats = find_best_alignment(fwd_bytes, s_bytes);
+                    mapped_bytes = fwd_bytes;
+                }
             }
+
+            let (best_total_mismatches, best_critical, best_absolute_3, best_index, best_alignment) = best_stats;
 
             // --- GRADING LOGIC ---
             let status = if best_total_mismatches == 0 {
@@ -261,38 +257,27 @@ pub fn scan_genomes(
                 "Low Risk"
             };
 
-            // If it's not found, coordinates are 0. Otherwise, 1-based coords.
-            let (start, end) = if best_total_mismatches > 5 {
-                (0, 0)
-            } else {
-                (best_index + 1, best_index + p_len)
-            };
+            let (start, end) = if best_total_mismatches > 5 { (0, 0) } else { (best_index + 1, best_index + p_len) };
 
             results.push(MatchResult {
                 sample_id: s_id.clone(),
                 primer_id: p_id.clone(),
-                is_forward: !is_reverse || is_forward,
+                is_forward,
                 mismatches: best_total_mismatches,
                 start_pos: start,
                 end_pos: end,
                 sample_length: s_bytes.len(),
                 status: status.to_string(),
                 alignment: best_alignment,
-                mapped_primer_seq: String::from_utf8(p_bytes.to_vec()).unwrap(),
+                mapped_primer_seq: String::from_utf8(mapped_bytes.to_vec()).unwrap(),
             });
             
-            // Progress Bar Logic
             completed_scans += 1;
-            
-            // Performance trick: Calling JS from Rust has a tiny overhead
-            // Only trigger the callback every 10 scans (or on the very last scan) to keep it fast
             if completed_scans % 10 == 0 || completed_scans == total_scans {
                 let percent = (completed_scans as f64 / total_scans as f64) * 100.0;
-                // Call the JavaScript function
                 let _ = progress_callback.call1(&JsValue::null(), &JsValue::from_f64(percent));
             }
         }
     }
-    // Convert the Rust Structs to a JSON string to send back to JS
     serde_json::to_string(&results).unwrap()
 }

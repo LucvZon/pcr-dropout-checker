@@ -39,14 +39,36 @@ const nextBtn = document.getElementById('next-btn') as HTMLButtonElement;
 const pageInfo = document.getElementById('page-info') as HTMLSpanElement;
 
 // Remember User Settings (LocalStorage)
+const autoDetectCb = document.getElementById('auto-detect-cb') as HTMLInputElement;
+const keywordContainer = document.getElementById('keyword-container') as HTMLDivElement;
+
 const savedFwd = localStorage.getItem('pcr-fwd-keyword');
 const savedRev = localStorage.getItem('pcr-rev-keyword');
+const savedAuto = localStorage.getItem('pcr-auto-detect');
+
 if (savedFwd) fwdInput.value = savedFwd;
 if (savedRev) revInput.value = savedRev;
+if (savedAuto !== null) autoDetectCb.checked = savedAuto === 'true';
 
-// Save keywords automatically when the user types
+// Toggle the grayed-out UI for keywords
+function updateKeywordUI() {
+    if (autoDetectCb.checked) {
+        keywordContainer.style.opacity = "0.4";
+        keywordContainer.style.pointerEvents = "none";
+    } else {
+        keywordContainer.style.opacity = "1";
+        keywordContainer.style.pointerEvents = "auto";
+    }
+}
+updateKeywordUI();
+
+// Save settings when changed
 fwdInput.addEventListener('input', () => localStorage.setItem('pcr-fwd-keyword', fwdInput.value));
 revInput.addEventListener('input', () => localStorage.setItem('pcr-rev-keyword', revInput.value));
+autoDetectCb.addEventListener('change', () => {
+    localStorage.setItem('pcr-auto-detect', autoDetectCb.checked.toString());
+    updateKeywordUI();
+});
 
 // Drag and Drop File Zones
 // Prevent the app from navigating away if the user misses the drop zone,
@@ -417,12 +439,18 @@ runBtn.addEventListener('click', async () => {
         parseFastaToMap(samplesStr);
 
         // Send strings to the background Web Worker
-        worker.postMessage({
+        // Build the payload object
+        const payload = {
             primersFasta: primersStr,
             samplesFasta: samplesStr,
             fwdKeyword: fwdInput.value,
-            revKeyword: revInput.value
-        });
+            revKeyword: revInput.value,
+            autoDetect: autoDetectCb.checked
+        };
+
+        // Send it to the worker
+        worker.postMessage(payload);
+
     } catch (err) {
         alert("Failed to read files.");
         runBtn.disabled = false;
