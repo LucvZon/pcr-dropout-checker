@@ -14,6 +14,7 @@ const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const progressContainer = document.getElementById('progress-container') as HTMLDivElement;
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
 const progressText = document.getElementById('progress-text') as HTMLSpanElement;
+const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
 
 // Dashboard Elements
 const sumTotal = document.getElementById('sum-total') as HTMLHeadingElement;
@@ -83,43 +84,39 @@ window.addEventListener("drop", (e) => {
     e.preventDefault();
 });
 
-function setupDragAndDrop(zoneId: string, inputId: string, textId: string) {
+// Centralized function to set the colors based on whether a file exists
+function refreshZoneUI(zoneId: string, inputId: string, textId: string) {
     const zone = document.getElementById(zoneId) as HTMLDivElement;
     const input = document.getElementById(inputId) as HTMLInputElement;
     const textLabel = document.getElementById(textId) as HTMLParagraphElement;
 
+    if (input.files && input.files.length > 0) {
+        zone.style.borderColor = 'var(--border-success)';
+        zone.style.backgroundColor = 'var(--bg-success)';
+        textLabel.innerHTML = `✅ ${input.files[0].name}`;
+        textLabel.style.color = 'var(--text-success)';
+    } else {
+        zone.style.borderColor = 'var(--border-hover)';
+        zone.style.backgroundColor = 'var(--bg-card)';
+        textLabel.innerText = "Drag & drop or click to browse";
+        textLabel.style.color = 'var(--text-muted)';
+    }
+}
+
+function setupDragAndDrop(zoneId: string, inputId: string, textId: string) {
+    const zone = document.getElementById(zoneId) as HTMLDivElement;
+    const input = document.getElementById(inputId) as HTMLInputElement;
+
     // Visual highlights when hovering over the invisible input
     input.addEventListener('dragenter', () => {
-        zone.style.borderColor = '#2563eb';
-        zone.style.backgroundColor = '#eff6ff';
+        zone.style.borderColor = 'var(--border-active)';
+        zone.style.backgroundColor = 'var(--bg-active)';
     });
 
-    input.addEventListener('dragleave', () => {
-        if (input.files && input.files.length > 0) {
-            // Revert back to GREEN if a file is already loaded
-            zone.style.borderColor = '#10b981';
-            zone.style.backgroundColor = '#f0fdf4';
-        } else {
-            // Revert back to WHITE/GRAY if no file is loaded
-            zone.style.borderColor = '#d1d5db';
-            zone.style.backgroundColor = '#ffffff';
-        }
-    });
-
-    input.addEventListener('change', () => {
-        if (input.files && input.files.length > 0) {
-            // Turn green and show the filename
-            zone.style.borderColor = '#10b981';
-            zone.style.backgroundColor = '#f0fdf4';
-            textLabel.innerHTML = `✅ ${input.files[0].name}`;
-            textLabel.style.color = '#10b981';
-        } else {
-            // Reset if they cancel
-            zone.style.borderColor = '#d1d5db';
-            zone.style.backgroundColor = '#ffffff';
-            textLabel.innerText = "Drag & drop or click to browse";
-            textLabel.style.color = '#6b7280';
-        }
+    input.addEventListener('dragleave', () => refreshZoneUI(zoneId, inputId, textId));
+    input.addEventListener('change', () => refreshZoneUI(zoneId, inputId, textId));
+    input.addEventListener('drop', () => {
+        setTimeout(() => refreshZoneUI(zoneId, inputId, textId), 50);
     });
 }
 
@@ -301,16 +298,16 @@ tabBtnTable.addEventListener('click', () => {
     viewMap.style.display = "none";
     
     // Style Active Button
-    tabBtnTable.style.background = "white";
-    tabBtnTable.style.border = "2px solid #d1d5db";
-    tabBtnTable.style.borderBottom = "2px solid white";
-    tabBtnTable.style.color = "#2563eb";
+    tabBtnTable.style.background = "var(--bg-card)";
+    tabBtnTable.style.border = "2px solid var(--border)";
+    tabBtnTable.style.borderBottom = "2px solid var(--bg-card)";
+    tabBtnTable.style.color = "var(--border-active)";
     
     // Style Inactive Button
-    tabBtnMap.style.background = "#f3f4f6";
+    tabBtnMap.style.background = "var(--bg-alt)";
     tabBtnMap.style.border = "2px solid transparent";
     tabBtnMap.style.borderBottom = "none";
-    tabBtnMap.style.color = "#6b7280";
+    tabBtnMap.style.color = "var(--text-muted)";
 });
 
 tabBtnMap.addEventListener('click', () => {
@@ -319,16 +316,16 @@ tabBtnMap.addEventListener('click', () => {
     viewTable.style.display = "none";
     
     // Style Active Button
-    tabBtnMap.style.background = "white";
-    tabBtnMap.style.border = "2px solid #d1d5db";
-    tabBtnMap.style.borderBottom = "2px solid white";
-    tabBtnMap.style.color = "#2563eb";
+    tabBtnMap.style.background = "var(--bg-card)";
+    tabBtnMap.style.border = "2px solid var(--border)";
+    tabBtnMap.style.borderBottom = "2px solid var(--bg-card)";
+    tabBtnMap.style.color = "var(--border-active)";
     
     // Style Inactive Button
-    tabBtnTable.style.background = "#f3f4f6";
+    tabBtnTable.style.background = "var(--bg-alt)";
     tabBtnTable.style.border = "2px solid transparent";
     tabBtnTable.style.borderBottom = "none";
-    tabBtnTable.style.color = "#6b7280";
+    tabBtnTable.style.color = "var(--text-muted)";
 });
 
 // -----------------------------------------
@@ -366,7 +363,7 @@ function renderTable() {
         tr.style.borderBottom = "1px solid #e5e7eb";
 
         // Determine Status Color
-        let color = "#111827";
+        let color = "var(--text-main)";
         if (res.status === "Perfect") color = "green";
         if (res.status === "Low Risk") color = "#d97706"; // Yellow/Orange
         if (res.status === "High Risk") color = "#ea580c"; // Dark Orange
@@ -982,4 +979,32 @@ exportFastaBtn.addEventListener('click', () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+});
+
+// -----------------------------------------
+// Dark/Light Theme Manager
+// -----------------------------------------
+function applyTheme(theme: string) {
+    if (theme === 'system') {
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    } else {
+        document.documentElement.setAttribute('data-theme', theme);
+    }
+}
+
+// Load saved theme (default to system)
+const savedTheme = localStorage.getItem('pcr-theme') || 'system';
+themeSelect.value = savedTheme;
+applyTheme(savedTheme);
+
+// Listen for user changing the dropdown
+themeSelect.addEventListener('change', () => {
+    localStorage.setItem('pcr-theme', themeSelect.value);
+    applyTheme(themeSelect.value);
+});
+
+// Automatically update if the OS changes theme while the app is open
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (themeSelect.value === 'system') applyTheme('system');
 });
