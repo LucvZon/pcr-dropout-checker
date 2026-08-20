@@ -257,7 +257,7 @@ pub fn scan_genomes(
                 "Low Risk"
             };
 
-            let (start, end) = if best_total_mismatches > 5 { (0, 0) } else { (best_index + 1, best_index + p_len) };
+            let (start, end) = (best_index + 1, best_index + p_len);
 
             results.push(MatchResult {
                 sample_id: s_id.clone(),
