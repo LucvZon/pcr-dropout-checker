@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/pcr-dropout-checker/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>primer-check</title>
-    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-cmQGppG2.js"></script>
+    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-Ck6UyCGr.js"></script>
     <link rel="stylesheet" crossorigin href="/pcr-dropout-checker/assets/index-DPJU49Jj.css">
   </head>
   <body style="font-family: system-ui, sans-serif; margin: 0; padding: 20px;">
@@ -191,11 +191,20 @@
                 </select>
               </div>
               
-              <button
-                id="export-fasta-btn"
-                style="padding: 10px 15px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap;">
-                📥 Export Alignment FASTA
-              </button>
+              <!-- Export Buttons -->
+              <div style="display: flex; gap: 10px;">
+                <button
+                  id="export-bed-btn"
+                  style="padding: 10px 15px; background: #8b5cf6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap;">
+                  📥 Export to BED
+                </button>
+                <button
+                  id="export-fasta-btn"
+                  style="padding: 10px 15px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap;">
+                  📥 Export Alignment FASTA
+                </button>
+              </div>
+
             </div>
           </div>
           
@@ -206,6 +215,6 @@
 
       </div>
     </div>
-    
+    
   </body>
 </html>
