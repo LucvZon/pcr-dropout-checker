@@ -146,6 +146,16 @@ let currentPage = 1;
 const ROWS_PER_PAGE = 50;
 
 let sampleSequences = new Map<string, string>();
+let currentPrimerFileName = "primers";
+
+// Helper: Get Current Date in YYYY-MM-DD format
+function getFormattedDate(): string {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 // Fast manual parser to keep sequences in JavaScript memory
 function parseFastaToMap(fastaStr: string) {
@@ -420,6 +430,9 @@ runBtn.addEventListener('click', async () => {
     const isSamplesValid = await validateFastaFile(sFile, "Samples");
     if (!isSamplesValid) return; // Stop execution if invalid
 
+    // Save the primer file name (stripping the extension) for export naming
+    currentPrimerFileName = pFile.name.replace(/\.[^/.]+$/, "");
+
     runBtn.disabled = true;
     runBtn.innerText = "⏳ Reading files & Processing...";
     cancelBtn.style.display = "block";
@@ -486,10 +499,15 @@ exportCsvBtn.addEventListener('click', () => {
     // 4. Create a virtual Blob and trigger standard browser download
     const blob = new Blob([csvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+
+    // Format the filename: YYYY-MM-DD_PrimerFileName_results.tsv (replace spaces with underscores)
+    const dateStr = getFormattedDate();
+    const safePrimerName = currentPrimerFileName.replace(/ /g, "_");
+    const fileName = `${dateStr}_${safePrimerName}_results.tsv`;
     
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "primer_mismatch_results.tsv");
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -972,10 +990,15 @@ exportFastaBtn.addEventListener('click', () => {
     // 3. Trigger Download
     const blob = new Blob([fastaContent], { type: 'text/plain;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+
+    // Format the filename: YYYY-MM-DD_SampleID_alignment.fasta (replace spaces with underscores)
+    const dateStr = getFormattedDate();
+    const safeSampleName = currentSample.replace(/ /g, "_");
+    const fileName = `${dateStr}_${safeSampleName}_alignment.fasta`;
     
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `${currentSample}_amplicon_alignment.fasta`);
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
