@@ -951,6 +951,55 @@ function drawGenomeMap(sampleId: string) {
 }
 
 // -----------------------------------------
+// EXPORT TO BED (BED6 + custom sequence column)
+// -----------------------------------------
+const exportBedBtn = document.getElementById('export-bed-btn') as HTMLButtonElement;
+
+exportBedBtn.addEventListener('click', () => {
+    const currentSample = sampleSelect.value;
+    if (!currentSample) return;
+
+    // Filter results for the currently viewed sample (must be a valid alignment)
+    const sampleResults = allResults.filter(
+        r => r.sample_id === currentSample && r.start_pos > 0
+    );
+    if (sampleResults.length === 0) return;
+
+    // Map to BED format
+    // BED files are 0-indexed for start position, but the end position is exclusive
+    const bedRows = sampleResults.map(r => {
+        const chrom = r.sample_id;
+        const chromStart = r.start_pos - 1; // Convert 1-indexed to 0-indexed
+        const chromEnd = r.end_pos;         
+        const name = r.primer_id;
+        const score = r.mismatches;
+        const strand = r.is_forward ? "+" : "-";
+        const sequence = r.mapped_primer_seq;
+
+        return [chrom, chromStart, chromEnd, name, score, strand, sequence].join("\t");
+    });
+
+    // BED files do not have header lines
+    const bedContent = bedRows.join("\n");
+
+    // Trigger Download
+    const blob = new Blob([bedContent], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    // Format the filename: YYYY-MM-DD_SampleID_primers.bed (replace spaces with underscores)
+    const dateStr = getFormattedDate();
+    const safeSampleName = currentSample.replace(/ /g, "_");
+    const fileName = `${dateStr}_${safeSampleName}_primers.bed`;
+    
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+});
+
+// -----------------------------------------
 // EXPORT GAP-PADDED ALIGNMENT FASTA
 // -----------------------------------------
 const exportFastaBtn = document.getElementById('export-fasta-btn') as HTMLButtonElement;
