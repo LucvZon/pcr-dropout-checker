@@ -2,6 +2,8 @@
 import './style.css';
 import ScannerWorker from './worker?worker';
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 
 // UI Elements
 const fwdInput = document.getElementById('fwd-key') as HTMLInputElement;
@@ -10,6 +12,8 @@ const primersFile = document.getElementById('primers-file') as HTMLInputElement;
 const samplesFile = document.getElementById('samples-file') as HTMLInputElement;
 const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
 const exportCsvBtn = document.getElementById('export-csv-btn') as HTMLButtonElement;
+const exportBedBtn = document.getElementById('export-bed-btn') as HTMLButtonElement;
+const exportFastaBtn = document.getElementById('export-fasta-btn') as HTMLButtonElement;
 const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const progressContainer = document.getElementById('progress-container') as HTMLDivElement;
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
@@ -155,6 +159,60 @@ function getFormattedDate(): string {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+}
+
+// Helper: Universal "Save As..." Dialog
+async function promptSaveFile(content: string, defaultFileName: string, fileExtension: string, mimeType: string) {
+    // 1. Desktop App (Tauri Native Dialog)
+    if ('__TAURI_INTERNALS__' in window) {
+        try {
+            const filePath = await save({
+                defaultPath: defaultFileName,
+                filters: [{ name: 'Export Data', extensions: [fileExtension] }]
+            });
+
+            // If the user didn't cancel the dialog, save the file
+            if (filePath) {
+                await writeTextFile(filePath, content);
+            }
+        } catch (err) {
+            console.error("Tauri save failed:", err);
+            alert("Failed to save file. Check Tauri permissions.");
+        }
+        return; // Always return here so Tauri doesn't fall back to the Web download
+    }
+
+    // 2. Web Browser (Modern Chromium/Edge File Picker)
+    if ('showSaveFilePicker' in window) {
+        try {
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName: defaultFileName,
+                types: [{
+                    description: `${fileExtension.toUpperCase()} File`,
+                    accept: { [mimeType]: [`.${fileExtension}`] },
+                }],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return; // Return here so Chromium doesn't fall back
+        } catch (err: any) {
+            if (err.name !== 'AbortError') console.error("File Picker Error:", err);
+            return; // User cancelled
+        }
+    }
+
+    // 3. Web Browser Fallback (Firefox, Safari)
+    // Note: Firefox will auto-download to the Downloads folder unless the user changes their browser settings.
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", defaultFileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 // Fast manual parser to keep sequences in JavaScript memory
@@ -473,7 +531,7 @@ runBtn.addEventListener('click', async () => {
 // -----------------------------------------
 // EXPORT TO CSV
 // -----------------------------------------
-exportCsvBtn.addEventListener('click', () => {
+exportCsvBtn.addEventListener('click', async () => {
     if (allResults.length === 0) return;
 
     // 1. Create the CSV Header
@@ -495,22 +553,12 @@ exportCsvBtn.addEventListener('click', () => {
 
     // 3. Combine header and rows
     const csvContent = [headers.join("\t"), ...rows].join("\n");
-
-    // 4. Create a virtual Blob and trigger standard browser download
-    const blob = new Blob([csvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
     // Format the filename: YYYY-MM-DD_PrimerFileName_results.tsv (replace spaces with underscores)
     const dateStr = getFormattedDate();
     const safePrimerName = currentPrimerFileName.replace(/ /g, "_");
     const fileName = `${dateStr}_${safePrimerName}_results.tsv`;
     
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", fileName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await promptSaveFile(csvContent, fileName, 'tsv', 'text/tab-separated-values');
 });
 
 // Redraw map when dropdown changes
@@ -953,9 +1001,7 @@ function drawGenomeMap(sampleId: string) {
 // -----------------------------------------
 // EXPORT TO BED (BED6 + custom sequence column)
 // -----------------------------------------
-const exportBedBtn = document.getElementById('export-bed-btn') as HTMLButtonElement;
-
-exportBedBtn.addEventListener('click', () => {
+exportBedBtn.addEventListener('click', async () => {
     const currentSample = sampleSelect.value;
     if (!currentSample) return;
 
@@ -981,30 +1027,19 @@ exportBedBtn.addEventListener('click', () => {
 
     // BED files do not have header lines
     const bedContent = bedRows.join("\n");
-
-    // Trigger Download
-    const blob = new Blob([bedContent], { type: 'text/plain;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
     
     // Format the filename: YYYY-MM-DD_SampleID_primers.bed (replace spaces with underscores)
     const dateStr = getFormattedDate();
     const safeSampleName = currentSample.replace(/ /g, "_");
     const fileName = `${dateStr}_${safeSampleName}_primers.bed`;
     
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", fileName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await promptSaveFile(bedContent, fileName, 'bed', 'text/plain');
 });
 
 // -----------------------------------------
 // EXPORT GAP-PADDED ALIGNMENT FASTA
 // -----------------------------------------
-const exportFastaBtn = document.getElementById('export-fasta-btn') as HTMLButtonElement;
-
-exportFastaBtn.addEventListener('click', () => {
+exportFastaBtn.addEventListener('click', async () => {
     const currentSample = sampleSelect.value;
     if (!currentSample) return;
 
@@ -1036,21 +1071,12 @@ exportFastaBtn.addEventListener('click', () => {
         fastaContent += `>${r.primer_id}\n${paddedSeq}\n`;
     });
 
-    // 3. Trigger Download
-    const blob = new Blob([fastaContent], { type: 'text/plain;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
     // Format the filename: YYYY-MM-DD_SampleID_alignment.fasta (replace spaces with underscores)
     const dateStr = getFormattedDate();
     const safeSampleName = currentSample.replace(/ /g, "_");
     const fileName = `${dateStr}_${safeSampleName}_alignment.fasta`;
     
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", fileName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    await promptSaveFile(fastaContent, fileName, 'fasta', 'text/plain');
 });
 
 // -----------------------------------------
