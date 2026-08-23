@@ -18,7 +18,7 @@ const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const progressContainer = document.getElementById('progress-container') as HTMLDivElement;
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement;
 const progressText = document.getElementById('progress-text') as HTMLSpanElement;
-const themeSelect = document.getElementById('theme-select') as HTMLSelectElement;
+const themeToggleCb = document.getElementById('theme-toggle-cb') as HTMLInputElement;
 
 // Dashboard Elements
 const sumTotal = document.getElementById('sum-total') as HTMLHeadingElement;
@@ -1086,23 +1086,26 @@ function applyTheme(theme: string) {
     if (theme === 'system') {
         const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        themeToggleCb.checked = isDark;
     } else {
         document.documentElement.setAttribute('data-theme', theme);
+        themeToggleCb.checked = theme === 'dark';
     }
 }
 
-// Load saved theme (default to system)
-const savedTheme = localStorage.getItem('pcr-theme') || 'system';
-themeSelect.value = savedTheme;
+// Load saved theme (default to system on first visit)
+let savedTheme = localStorage.getItem('pcr-theme') || 'system';
 applyTheme(savedTheme);
 
-// Listen for user changing the dropdown
-themeSelect.addEventListener('change', () => {
-    localStorage.setItem('pcr-theme', themeSelect.value);
-    applyTheme(themeSelect.value);
+// Listen for user toggling the switch
+themeToggleCb.addEventListener('change', () => {
+    const newTheme = themeToggleCb.checked ? 'dark' : 'light';
+    localStorage.setItem('pcr-theme', newTheme);
+    savedTheme = newTheme;
+    applyTheme(newTheme);
 });
 
 // Automatically update if the OS changes theme while the app is open
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (themeSelect.value === 'system') applyTheme('system');
+    if (savedTheme === 'system') applyTheme('system');
 });
