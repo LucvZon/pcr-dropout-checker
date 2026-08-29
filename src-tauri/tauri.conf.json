@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "pcr-droput-checker",
+        "title": "PCR Dropout Checker",
         "width": 800,
         "height": 600,
         "resizable": true,
