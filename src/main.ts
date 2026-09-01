@@ -97,12 +97,12 @@ function refreshZoneUI(zoneId: string, inputId: string, textId: string) {
     if (input.files && input.files.length > 0) {
         zone.style.borderColor = 'var(--border-success)';
         zone.style.backgroundColor = 'var(--bg-success)';
-        textLabel.innerHTML = `✅ ${input.files[0].name}`;
+        textLabel.textContent = `✅ ${input.files[0].name}`;
         textLabel.style.color = 'var(--text-success)';
     } else {
         zone.style.borderColor = 'var(--border-hover)';
         zone.style.backgroundColor = 'var(--bg-card)';
-        textLabel.innerText = "Drag & drop or click to browse";
+        textLabel.textContent = "Drag & drop or click to browse";
         textLabel.style.color = 'var(--text-muted)';
     }
 }
@@ -159,6 +159,17 @@ function getFormattedDate(): string {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+}
+
+// Helper: Sanitize user input to prevent XSS
+function escapeHTML(str: string): string {
+    return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[tag] || tag));
 }
 
 // Helper: Universal "Save As..." Dialog
@@ -437,15 +448,20 @@ function renderTable() {
         if (res.status === "High Risk") color = "#ea580c"; // Dark Orange
         if (res.status === "Failure") color = "red";
 
+        // Sanitize the raw IDs and alignment string
+        const safeSampleId = escapeHTML(res.sample_id);
+        const safePrimerId = escapeHTML(res.primer_id);
+        const safeAlignment = escapeHTML(res.alignment);
+
         // Convert [T] into a red T, while keeping normal nucleotides black
-        const formattedAlignment = res.alignment.replace(
-            /\[([A-Z-])\]/g, 
+        const formattedAlignment = safeAlignment.replace(
+            /\[([A-Z0-9-])\]/gi, 
             '<span style="color:red; font-weight:bold;">$1</span>'
         );
 
         tr.innerHTML = `
-            <td style="padding: 10px;">${res.sample_id}</td>
-            <td style="padding: 10px;">${res.primer_id}</td>
+            <td style="padding: 10px;">${safeSampleId}</td>
+            <td style="padding: 10px;">${safePrimerId}</td>
             <td style="padding: 10px;">${res.start_pos || '-'}</td>
             <td style="padding: 10px;">${res.end_pos || '-'}</td>
             <td style="padding: 10px; font-family: monospace; letter-spacing: 2px;">${formattedAlignment}</td>
@@ -923,10 +939,13 @@ function drawGenomeMap(sampleId: string) {
             if (hoveredPrimer.status === "High Risk") color = "#f97316"; // Orange
             if (hoveredPrimer.status === "Failure") color = "#f87171"; // Red
 
+            // Sanitize the Primer ID
+            const safePrimerId = escapeHTML(hoveredPrimer.primer_id);
+
             // Populate Tooltip
             tooltip.innerHTML = `
                 <div style="margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">
-                    <strong style="font-size: 15px;">${hoveredPrimer.primer_id}</strong>
+                    <strong style="font-size: 15px;">${safePrimerId}</strong>
                 </div>
                 <div><strong>Position:</strong> ${hoveredPrimer.start_pos.toLocaleString()} - ${hoveredPrimer.end_pos.toLocaleString()} bp</div>
                 <div><strong>Direction:</strong> ${hoveredPrimer.is_forward ? 'Forward ➔' : 'Reverse ⬅'}</div>
