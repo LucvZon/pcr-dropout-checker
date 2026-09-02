@@ -310,23 +310,35 @@ function validateAndProcessFasta(rawText: string, fileType: string): ProcessedFa
     let sequenceCount = 0;
     
     const idCounts = new Map<string, number>();
+    let validationFailed = false;
 
     const saveCurrent = () => {
         if (currentId) {
             if (currentSeq.trim() === "") {
                 showToast(`Warning: Header "${currentId}" in ${fileType} has no sequence data.`, "warning");
             }
+
+            // Hard Cap on Primer Length
+            if (fileType === "Primers" && currentSeq.length > 200) {
+                showToast(`Error: Primer "${currentId}" is too long (${currentSeq.length} bp). Max allowed is 200 bp.`, "error");
+                validationFailed = true;
+                return;
+            }
+
             // Save to map (lowercased for UI consistency)
             sequenceMap.set(currentId, currentSeq.toLowerCase());
         }
     };
 
     for (let i = 0; i < lines.length; i++) {
+        if (validationFailed) return null;
+
         const line = lines[i].trim();
         if (!line || line.startsWith(';')) continue; // Skip blanks and comments
 
         if (line.startsWith('>')) {
             saveCurrent();
+            if (validationFailed) return null;
             
             let rawId = line.substring(1).trim();
             if (!rawId) rawId = "Unnamed_Sequence";
@@ -549,11 +561,15 @@ function renderTable() {
         );
 
         tr.innerHTML = `
-            <td style="padding: 10px;">${safeSampleId}</td>
-            <td style="padding: 10px;">${safePrimerId}</td>
+            <td style="padding: 10px; word-break: break-all;">${safeSampleId}</td>
+            <td style="padding: 10px; word-break: break-all;">${safePrimerId}</td>
             <td style="padding: 10px;">${res.start_pos || '-'}</td>
             <td style="padding: 10px;">${res.end_pos || '-'}</td>
-            <td style="padding: 10px; font-family: monospace; letter-spacing: 2px;">${formattedAlignment}</td>
+            <td style="padding: 10px;">
+                <div style="font-family: monospace; letter-spacing: 1px; width: 100%; overflow-x: auto; white-space: nowrap; padding-bottom: 4px;">
+                    ${formattedAlignment}
+                </div>
+            </td>
             <td style="padding: 10px; font-weight: bold; color: ${color};">${res.status}</td>
         `;
         tableBody.appendChild(tr);
