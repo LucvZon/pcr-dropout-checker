@@ -97,7 +97,7 @@ function refreshZoneUI(zoneId: string, inputId: string, textId: string) {
     if (input.files && input.files.length > 0) {
         zone.style.borderColor = 'var(--border-success)';
         zone.style.backgroundColor = 'var(--bg-success)';
-        textLabel.textContent = `✅ ${input.files[0].name}`;
+        textLabel.textContent = `${input.files[0].name}`;
         textLabel.style.color = 'var(--text-success)';
     } else {
         zone.style.borderColor = 'var(--border-hover)';
@@ -226,26 +226,6 @@ async function promptSaveFile(content: string, defaultFileName: string, fileExte
     URL.revokeObjectURL(url);
 }
 
-// Fast manual parser to keep sequences in JavaScript memory
-function parseFastaToMap(fastaStr: string) {
-    sampleSequences.clear();
-    let currentId = "";
-    let currentSeq = "";
-    
-    for (const line of fastaStr.split(/\r?\n/)) {
-        const t = line.trim();
-        if (!t) continue;
-        if (t.startsWith('>')) {
-            if (currentId) sampleSequences.set(currentId, currentSeq);
-            currentId = t.substring(1).trim();
-            currentSeq = "";
-        } else {
-            currentSeq += t.toLowerCase(); // Force to lowercase for standard alignment viewing
-        }
-    }
-    if (currentId) sampleSequences.set(currentId, currentSeq);
-}
-
 // Helper: Read an uploaded File as a String
 function readTextFile(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -257,35 +237,144 @@ function readTextFile(file: File): Promise<string> {
 }
 
 // -----------------------------------------
+// TOAST NOTIFICATION SYSTEM
+// -----------------------------------------
+function showToast(message: string, type: 'success' | 'error' | 'warning' = 'error', durationMs: number = 5000) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300); // Wait for CSS fade transition
+    }, durationMs);
+}
+
+// -----------------------------------------
 // INPUT VALIDATION (Guardrails)
 // -----------------------------------------
-async function validateFastaFile(file: File, fileType: string): Promise<boolean> {
-    // 1. Check File Extension
+// 1. Initial Pre-check (Size, Extension, and 4KB Integrity Check)
+async function preValidateFile(file: File, fileType: string): Promise<boolean> {
+    if (file.size === 0) {
+        showToast(`${fileType} file is empty (0 bytes).`, "error");
+        return false;
+    }
+    if (file.size > 1024 * 1024 * 1024) { // 1 GB Limit
+        showToast(`${fileType} file is too large (>1GB). Please use the CLI tool.`, "error");
+        return false;
+    }
+
     const validExtensions = ['.fasta', '.fa', '.fna', '.txt'];
     const fileName = file.name.toLowerCase();
     const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
 
     if (!hasValidExtension) {
-        alert(`❌ Invalid ${fileType} file: "${file.name}"\nPlease upload a .fasta, .fa, or .txt file.`);
+        showToast(`Invalid ${fileType} file extension: "${file.name}". Use .fasta, .fa, .fna, or .txt`, "error");
         return false;
     }
 
-    // 2. Peek at the content (Read only the first 100 bytes)
     try {
-        const chunk = file.slice(0, 100);
+        // Read the first 4KB to check integrity
+        const chunk = file.slice(0, 4096);
         const text = await chunk.text();
         
-        // A valid FASTA must start with '>' (ignoring leading whitespace/newlines)
-        if (!text.trim().startsWith('>')) {
-            alert(`❌ Format Error in ${fileType}: "${file.name}"\nThe file does not appear to be a valid FASTA format. It must start with a '>' character.`);
+        // A valid FASTA must have a '>' or ';' (comment) before sequence data
+        if (!/^\s*[>;]/m.test(text)) {
+            showToast(`Format Error: "${file.name}" does not appear to be a valid FASTA format.`, "error");
             return false;
         }
     } catch (e) {
-        alert(`❌ Could not read the ${fileType} file: "${file.name}"`);
+        showToast(`Could not read the ${fileType} file: "${file.name}"`, "error");
         return false;
     }
 
-    return true; // Passed all checks!
+    return true;
+}
+
+// 2. Deep Parsing & Content Validation
+interface ProcessedFasta {
+    sanitizedFasta: string;
+    sequenceMap: Map<string, string>;
+}
+
+function validateAndProcessFasta(rawText: string, fileType: string): ProcessedFasta | null {
+    const lines = rawText.split(/\r?\n/);
+    const sequenceMap = new Map<string, string>();
+    let currentId = "";
+    let currentSeq = "";
+    let sequenceCount = 0;
+    
+    const idCounts = new Map<string, number>();
+
+    const saveCurrent = () => {
+        if (currentId) {
+            if (currentSeq.trim() === "") {
+                showToast(`Warning: Header "${currentId}" in ${fileType} has no sequence data.`, "warning");
+            }
+            // Save to map (lowercased for UI consistency)
+            sequenceMap.set(currentId, currentSeq.toLowerCase());
+        }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith(';')) continue; // Skip blanks and comments
+
+        if (line.startsWith('>')) {
+            saveCurrent();
+            
+            let rawId = line.substring(1).trim();
+            if (!rawId) rawId = "Unnamed_Sequence";
+
+            // Handle Duplicates
+            if (idCounts.has(rawId)) {
+                const count = idCounts.get(rawId)! + 1;
+                idCounts.set(rawId, count);
+                const newId = `${rawId}_${count}`;
+                showToast(`Warning: Duplicate ID "${rawId}" found in ${fileType}. Renamed to "${newId}".`, "warning");
+                currentId = newId;
+            } else {
+                idCounts.set(rawId, 1);
+                currentId = rawId;
+            }
+            currentSeq = "";
+            sequenceCount++;
+        } else {
+            // No sequence ID yet!
+            if (!currentId) {
+                showToast(`Error in ${fileType} (Line ${i+1}): Sequence data found before a valid '>' header.`, "error");
+                return null; 
+            }
+
+            // Invalid character check (Allow A-Z, a-z, and hyphens)
+            if (!/^[A-Za-z-]+$/.test(line)) {
+                showToast(`Error in ${fileType} (Line ${i+1}): Invalid characters found in sequence "${currentId}".`, "error");
+                return null; 
+            }
+
+            currentSeq += line;
+        }
+    }
+    saveCurrent();
+
+    if (sequenceCount === 0) {
+        showToast(`Error: No valid sequences found in ${fileType} file.`, "error");
+        return null;
+    }
+
+    // Reconstruct a clean FASTA string to pass to the Rust Worker
+    // (This guarantees the Rust parser won't trip on duplicate IDs or weird chars)
+    let sanitizedFasta = "";
+    for (const [id, seq] of sequenceMap.entries()) {
+        sanitizedFasta += `>${id}\n${seq.toUpperCase()}\n`;
+    }
+
+    return { sanitizedFasta, sequenceMap };
 }
 
 // -----------------------------------------
@@ -493,16 +582,13 @@ runBtn.addEventListener('click', async () => {
     const sFile = samplesFile.files?.[0];
 
     if (!pFile || !sFile) {
-        alert("Please upload BOTH a Primers file and a Samples file!");
+        showToast("Please upload BOTH a Primers file and a Samples file!", "warning");
         return;
     }
 
-    // --- Run the Validation Guardrails ---
-    const isPrimersValid = await validateFastaFile(pFile, "Primers");
-    if (!isPrimersValid) return; // Stop execution if invalid
-
-    const isSamplesValid = await validateFastaFile(sFile, "Samples");
-    if (!isSamplesValid) return; // Stop execution if invalid
+    // Pre-Validate Files (Size, extension, 4KB check)
+    if (!(await preValidateFile(pFile, "Primers"))) return;
+    if (!(await preValidateFile(sFile, "Samples"))) return;
 
     // Save the primer file name (stripping the extension) for export naming
     currentPrimerFileName = pFile.name.replace(/\.[^/.]+$/, "");
@@ -517,17 +603,31 @@ runBtn.addEventListener('click', async () => {
     progressText.innerText = "0%";
 
     try {
-        // Read the actual text content from the uploaded files
-        const primersStr = await readTextFile(pFile);
-        const samplesStr = await readTextFile(sFile);
+        // Read Files
+        const rawPrimersStr = await readTextFile(pFile);
+        const rawSamplesStr = await readTextFile(sFile);
 
-        parseFastaToMap(samplesStr);
+        // Deep Validate & Parse Content
+        const processedPrimers = validateAndProcessFasta(rawPrimersStr, "Primers");
+        const processedSamples = validateAndProcessFasta(rawSamplesStr, "Samples");
+
+        // If either file failed deep validation, abort the run
+        if (!processedPrimers || !processedSamples) {
+            runBtn.disabled = false;
+            runBtn.innerText = "Scan Genomes";
+            progressContainer.style.display = "none";
+            cancelBtn.style.display = "none";
+            return;
+        }
+
+        // Save samples to global map for the genome map rendering
+        sampleSequences = processedSamples.sequenceMap;
 
         // Send strings to the background Web Worker
         // Build the payload object
         const payload = {
-            primersFasta: primersStr,
-            samplesFasta: samplesStr,
+            primersFasta: processedPrimers.sanitizedFasta,
+            samplesFasta: processedSamples.sanitizedFasta,
             fwdKeyword: fwdInput.value,
             revKeyword: revInput.value,
             autoDetect: autoDetectCb.checked
@@ -537,10 +637,11 @@ runBtn.addEventListener('click', async () => {
         worker.postMessage(payload);
 
     } catch (err) {
-        alert("Failed to read files.");
+        showToast("An unexpected error occurred while reading the files.", "error");
         runBtn.disabled = false;
         runBtn.innerText = "Scan Genomes";
         progressContainer.style.display = "none";
+        cancelBtn.style.display = "none";
     }
 });
 
