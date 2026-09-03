@@ -145,26 +145,48 @@ fn evaluate_alignment(primer: &[u8], window: &[u8]) -> (usize, usize, bool, Stri
 // Helper function to find the best alignment for a specific sequence
 fn find_best_alignment(p_bytes: &[u8], s_bytes: &[u8]) -> (usize, usize, bool, usize, String) {
     let p_len = p_bytes.len();
-    let mut best_total_mismatches = usize::MAX;
-    let mut best_critical = 0;
-    let mut best_absolute_3 = false;
+    let mut best_total = usize::MAX;
+    let mut best_crit = usize::MAX;
+    let mut best_abs_3 = true;
     let mut best_index = 0;
-    let mut best_alignment = String::new();
 
     for i in 0..=(s_bytes.len() - p_len) {
-        let window = &s_bytes[i..(i + p_len)];
-        let (total, crit, abs_3, aln) = evaluate_alignment(p_bytes, window);
+        let mut total = 0;
+        let mut crit = 0;
+        let mut abs_3 = false;
         
-        if total < best_total_mismatches || (total == best_total_mismatches && crit < best_critical) {
-            best_total_mismatches = total;
-            best_critical = crit;
-            best_absolute_3 = abs_3;
-            best_index = i;
-            best_alignment = aln;
+        for j in 0..p_len {
+            if !is_iupac_match(p_bytes[j], s_bytes[i + j]) {
+                total += 1;
+                
+                if total > best_total {
+                    break; 
+                }
+
+                if j >= p_len.saturating_sub(5) {
+                    crit += 1;
+                }
+
+                if j == p_len - 1 {
+                    abs_3 = true;
+                }
+            }
         }
-        if best_total_mismatches == 0 { break; }
+
+        if total < best_total || (total == best_total && crit < best_crit) {
+            best_total = total;
+            best_crit = crit;
+            best_abs_3 = abs_3;
+            best_index = i;
+        }
+
+        if best_total == 0 { break; } 
     }
-    (best_total_mismatches, best_critical, best_absolute_3, best_index, best_alignment)
+
+    let winning_window = &s_bytes[best_index..(best_index + p_len)];
+    let (_, _, _, final_alignment_str) = evaluate_alignment(p_bytes, winning_window);
+
+    (best_total, best_crit, best_abs_3, best_index, final_alignment_str)
 }
 
 // -----------------------------------------
