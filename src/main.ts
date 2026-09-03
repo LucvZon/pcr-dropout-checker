@@ -145,7 +145,20 @@ document.getElementById("github-link")?.addEventListener("click", async (e) => {
 });
 
 // Global State for Pagination
-let allResults: any[] = [];
+interface MatchResult {
+  sample_id: string;
+  primer_id: string;
+  is_forward: boolean;
+  mismatches: number;
+  start_pos: number;
+  end_pos: number;
+  sample_length: number;
+  status: "Perfect" | "Low Risk" | "High Risk" | "Failure" | string;
+  alignment: string;
+  mapped_primer_seq: string;
+}
+
+let allResults: MatchResult[] = [];
 let currentPage = 1;
 const ROWS_PER_PAGE = 50;
 
