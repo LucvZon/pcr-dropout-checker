@@ -300,7 +300,9 @@ pub fn scan_genomes(
             });
             
             completed_scans += 1;
-            if completed_scans % 10 == 0 || completed_scans == total_scans {
+            let report_interval = (total_scans / 200).max(1);
+            
+            if completed_scans % report_interval == 0 || completed_scans == total_scans {
                 let percent = (completed_scans as f64 / total_scans as f64) * 100.0;
                 let _ = progress_callback.call1(&JsValue::null(), &JsValue::from_f64(percent));
             }
