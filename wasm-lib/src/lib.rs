@@ -147,12 +147,18 @@ fn build_alignment_string(primer: &[u8], window: &[u8]) -> String {
 }
 
 // Helper function to find the best alignment for a specific sequence
-fn find_best_alignment(p_bytes: &[u8], s_bytes: &[u8]) -> (usize, usize, bool, usize, String) {
+fn find_best_alignment(
+    p_bytes: &[u8], 
+    s_bytes: &[u8], 
+    bound_total: usize, 
+    bound_crit: usize
+) -> Option<(usize, usize, bool, usize, String)> {
     let p_len = p_bytes.len();
-    let mut best_mismatches = usize::MAX;
-    let mut best_critical = 0;
+    let mut best_mismatches = bound_total;
+    let mut best_critical = bound_crit;
     let mut best_absolute_3 = false;
     let mut best_index = 0;
+    let mut found_better = false;
 
     for i in 0..=(s_bytes.len() - p_len) {
         let window = &s_bytes[i..i + p_len];
@@ -166,15 +172,19 @@ fn find_best_alignment(p_bytes: &[u8], s_bytes: &[u8]) -> (usize, usize, bool, u
             best_critical = crit;
             best_absolute_3 = abs_3;
             best_index = i;
+            found_better = true;
         }
         
         if best_mismatches == 0 { break; }
     }
 
-    let best_window = &s_bytes[best_index..best_index + p_len];
-    let best_alignment = build_alignment_string(p_bytes, best_window);
-
-    (best_mismatches, best_critical, best_absolute_3, best_index, best_alignment)
+    if found_better || bound_total == usize::MAX {
+        let best_window = &s_bytes[best_index..best_index + p_len];
+        let best_alignment = build_alignment_string(p_bytes, best_window);
+        Some((best_mismatches, best_critical, best_absolute_3, best_index, best_alignment))
+    } else {
+        None
+    }
 }
 
 // -----------------------------------------
@@ -227,29 +237,36 @@ pub fn scan_genomes(
             let mapped_bytes;
 
             if auto_detect {
-                // RUN BOTH STRANDS
-                let fwd_stats = find_best_alignment(fwd_bytes, s_bytes);
-                let rev_stats = find_best_alignment(rev_bytes, s_bytes);
+                // PASS 1: Unbounded Forward Scan
+                let fwd_stats = find_best_alignment(fwd_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
                 
-                // Compare: which one has fewer total mismatches? (Tie goes to fewer critical mismatches)
-                if rev_stats.0 < fwd_stats.0 || (rev_stats.0 == fwd_stats.0 && rev_stats.1 < fwd_stats.1) {
-                    is_forward = false;
-                    best_stats = rev_stats;
-                    mapped_bytes = rev_bytes;
-                } else {
+                if fwd_stats.0 == 0 {
+                    // Perfect forward match, skip reverse entirely
                     is_forward = true;
                     best_stats = fwd_stats;
                     mapped_bytes = fwd_bytes;
+                } else {
+                    // PASS 2: Bounded Reverse Scan
+                    if let Some(rev_stats) = find_best_alignment(rev_bytes, s_bytes, fwd_stats.0, fwd_stats.1) {
+                        is_forward = false;
+                        best_stats = rev_stats;
+                        mapped_bytes = rev_bytes;
+                    } else {
+                        // Reverse didn't beat forward (or tied, tie goes to forward)
+                        is_forward = true;
+                        best_stats = fwd_stats;
+                        mapped_bytes = fwd_bytes;
+                    }
                 }
             } else {
                 // FALLBACK TO STRICT KEYWORDS
                 if is_rev_keyword && !is_fwd_keyword {
                     is_forward = false;
-                    best_stats = find_best_alignment(rev_bytes, s_bytes);
+                    best_stats = find_best_alignment(rev_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
                     mapped_bytes = rev_bytes;
                 } else {
                     is_forward = true;
-                    best_stats = find_best_alignment(fwd_bytes, s_bytes);
+                    best_stats = find_best_alignment(fwd_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
                     mapped_bytes = fwd_bytes;
                 }
             }
