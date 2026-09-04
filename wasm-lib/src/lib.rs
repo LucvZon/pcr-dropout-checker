@@ -106,87 +106,75 @@ fn is_iupac_match(primer_base: u8, ref_base: u8) -> bool {
     (mask_p & mask_r) != 0
 }
 
-// Position-Aware Alignment Evaluator
-// Returns: (Total Mismatches, Mismatches in 3' Zone, Is absolute 3' broken, Alignment String)
-fn evaluate_alignment(primer: &[u8], window: &[u8]) -> (usize, usize, bool, String) {
+/// Fast mismatch counter
+#[inline]
+fn count_mismatches_with_bailout(
+    primer: &[u8], 
+    window: &[u8], 
+    max_allowed: usize
+) -> Option<(usize, usize, bool)> {
     let len = primer.len();
-    let mut total_mismatches = 0;
-    let mut critical_mismatches = 0;
-    let mut absolute_3_prime_broken = false;
-    let mut alignment_str = String::with_capacity(len + 5); // Little extra capacity for brackets
+    let mut total = 0;
+    let mut critical = 0;
+    let mut abs_3_broken = false;
 
     for i in 0..len {
-        let sample_base = window[i] as char;
-        
-        if is_iupac_match(primer[i], window[i]) {
-            // Match: Just push the sample's nucleotide
-            alignment_str.push(sample_base);
-        } else {
-            // Mismatch: Wrap the mutated nucleotide in brackets [X]
-            alignment_str.push('[');
-            alignment_str.push(sample_base);
-            alignment_str.push(']');
+        if !is_iupac_match(primer[i], window[i]) {
+            total += 1;
+            if total > max_allowed { return None; } // bail early
             
-            total_mismatches += 1;
-            
-            // Check 3' Critical Zone (last 5 bases)
-            if i >= len.saturating_sub(5) {
-                critical_mismatches += 1;
-            }
-            // Check absolute last base
-            if i == len - 1 {
-                absolute_3_prime_broken = true;
-            }
+            if i >= len.saturating_sub(5) { critical += 1; }
+            if i == len - 1 { abs_3_broken = true; }
         }
     }
-    (total_mismatches, critical_mismatches, absolute_3_prime_broken, alignment_str)
+    Some((total, critical, abs_3_broken))
+}
+
+/// Only called once for the winning position
+fn build_alignment_string(primer: &[u8], window: &[u8]) -> String {
+    let len = primer.len();
+    let mut s = String::with_capacity(len + len / 4);
+    for i in 0..len {
+        if is_iupac_match(primer[i], window[i]) {
+            s.push(window[i] as char);
+        } else {
+            s.push('[');
+            s.push(window[i] as char);
+            s.push(']');
+        }
+    }
+    s
 }
 
 // Helper function to find the best alignment for a specific sequence
 fn find_best_alignment(p_bytes: &[u8], s_bytes: &[u8]) -> (usize, usize, bool, usize, String) {
     let p_len = p_bytes.len();
-    let mut best_total = usize::MAX;
-    let mut best_crit = usize::MAX;
-    let mut best_abs_3 = true;
+    let mut best_mismatches = usize::MAX;
+    let mut best_critical = 0;
+    let mut best_absolute_3 = false;
     let mut best_index = 0;
 
     for i in 0..=(s_bytes.len() - p_len) {
-        let mut total = 0;
-        let mut crit = 0;
-        let mut abs_3 = false;
+        let window = &s_bytes[i..i + p_len];
         
-        for j in 0..p_len {
-            if !is_iupac_match(p_bytes[j], s_bytes[i + j]) {
-                total += 1;
-                
-                if total > best_total {
-                    break; 
-                }
+        let Some((total, crit, abs_3)) = count_mismatches_with_bailout(p_bytes, window, best_mismatches) else { 
+            continue; 
+        };
 
-                if j >= p_len.saturating_sub(5) {
-                    crit += 1;
-                }
-
-                if j == p_len - 1 {
-                    abs_3 = true;
-                }
-            }
-        }
-
-        if total < best_total || (total == best_total && crit < best_crit) {
-            best_total = total;
-            best_crit = crit;
-            best_abs_3 = abs_3;
+        if total < best_mismatches || (total == best_mismatches && crit < best_critical) {
+            best_mismatches = total;
+            best_critical = crit;
+            best_absolute_3 = abs_3;
             best_index = i;
         }
-
-        if best_total == 0 { break; } 
+        
+        if best_mismatches == 0 { break; }
     }
 
-    let winning_window = &s_bytes[best_index..(best_index + p_len)];
-    let (_, _, _, final_alignment_str) = evaluate_alignment(p_bytes, winning_window);
+    let best_window = &s_bytes[best_index..best_index + p_len];
+    let best_alignment = build_alignment_string(p_bytes, best_window);
 
-    (best_total, best_crit, best_abs_3, best_index, final_alignment_str)
+    (best_mismatches, best_critical, best_absolute_3, best_index, best_alignment)
 }
 
 // -----------------------------------------
