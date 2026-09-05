@@ -459,7 +459,7 @@ function setupWorker() {
                 tabBtnTable.click();
 
             } else {
-                alert("Error: " + response.error);
+                showToast("Worker Error: " + response.error, "error");
             }
         }
     };
@@ -652,18 +652,21 @@ runBtn.addEventListener('click', async () => {
         // Save samples to global map for the genome map rendering
         sampleSequences = processedSamples.sequenceMap;
 
-        // Send strings to the background Web Worker
-        // Build the payload object
+        // Send Clean Data to Rust Web Worker via Transferables
+        const encoder = new TextEncoder();
+        const primersBuffer = encoder.encode(processedPrimers.sanitizedFasta).buffer;
+        const samplesBuffer = encoder.encode(processedSamples.sanitizedFasta).buffer;
+
         const payload = {
-            primersFasta: processedPrimers.sanitizedFasta,
-            samplesFasta: processedSamples.sanitizedFasta,
+            primersBuffer,
+            samplesBuffer,
             fwdKeyword: fwdInput.value,
             revKeyword: revInput.value,
             autoDetect: autoDetectCb.checked
         };
 
         // Send it to the worker
-        worker.postMessage(payload);
+        worker.postMessage(payload, [primersBuffer, samplesBuffer]);
 
     } catch (err) {
         showToast("An unexpected error occurred while reading the files.", "error");
