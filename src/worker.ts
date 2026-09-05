@@ -5,7 +5,7 @@ import init, { scan_genomes } from '../wasm-lib/pkg/wasm_lib.js';
 // 2. Listen for messages sent from the main UI thread
 self.onmessage = async (event) => {
     // Unpack the data sent from the UI
-    const { primersFasta, samplesFasta, fwdKeyword, revKeyword, autoDetect } = event.data;
+    const { primersBuffer, samplesBuffer, fwdKeyword, revKeyword, autoDetect } = event.data;
 
     try {
         // Initialize the WebAssembly module
@@ -17,8 +17,12 @@ self.onmessage = async (event) => {
             self.postMessage({ type: 'progress', percent: percent });
         };
 
+        // Convert ArrayBuffer to Uint8Array (zero-copy view) and pass directly to WASM
+        const primersArray = new Uint8Array(primersBuffer);
+        const samplesArray = new Uint8Array(samplesBuffer);
+
         // RUN THE RUST ENGINE! (This happens in the background)
-        const resultJsonString = scan_genomes(primersFasta, samplesFasta, fwdKeyword, revKeyword, autoDetect, progressCallback);
+        const resultJsonString = scan_genomes(primersArray, samplesArray, fwdKeyword, revKeyword, autoDetect, progressCallback);
 
         // Parse the JSON string from Rust into actual JavaScript Objects
         const results = JSON.parse(resultJsonString);
@@ -28,6 +32,6 @@ self.onmessage = async (event) => {
         
     } catch (error) {
         // If anything crashes, tell the UI
-        self.postMessage({ success: false, error: String(error) });
+        self.postMessage({ type: 'complete', success: false, error: String(error) });
     }
 };
