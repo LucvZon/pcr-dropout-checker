@@ -192,15 +192,17 @@ fn find_best_alignment(
 // -----------------------------------------
 #[wasm_bindgen]
 pub fn scan_genomes(
-    primers_fasta: &str,
-    samples_fasta: &str,
+    primers_fasta: &[u8],
+    samples_fasta: &[u8],
     fwd_keyword: &str,
     rev_keyword: &str,
-    auto_detect: bool, // NEW PARAMETER
+    auto_detect: bool,
     progress_callback: &Function,
 ) -> String {
-    let primers = parse_fasta(primers_fasta);
-    let samples = parse_fasta(samples_fasta);
+    let primers_str = std::str::from_utf8(primers_fasta).expect("Invalid UTF-8 in primers");
+    let samples_str = std::str::from_utf8(samples_fasta).expect("Invalid UTF-8 in samples");
+    let primers = parse_fasta(primers_str);
+    let samples = parse_fasta(samples_str);
     let mut results: Vec<MatchResult> = Vec::new();
 
     let total_scans = primers.len() * samples.len();
