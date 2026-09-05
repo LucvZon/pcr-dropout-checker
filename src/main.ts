@@ -730,14 +730,59 @@ tabBtnMap.addEventListener('click', () => {
 // -----------------------------------------
 // PHASE 2: CANVAS GENOME MAP ENGINE
 // -----------------------------------------
+// Helper: Get color palette for Canvas based on active theme
+function getCanvasColors() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    
+    if (isDark) {
+        return {
+            wrapperBg: '#0f172a',            // Slate 900
+            stickyBg: 'rgba(15, 23, 42, 0.95)',
+            stickyBorder: '#334155',        // Slate 700
+            rulerText: '#94a3b8',           // Slate 400
+            rulerMajorTick: '#94a3b8',
+            rulerMinorTick: '#334155',
+            refBg: '#1e293b',               // Slate 800
+            refBorder: '#3b82f6',           // Blue 500
+            refText: '#60a5fa',             // Blue 400
+            primerIdText: '#f1f5f9',        // Slate 100
+            boxMatchBg: '#1e293b',          // Slate 800
+            boxMatchText: '#cbd5e1',        // Slate 300
+            boxMismatchBg: '#7f1d1d',       // Red 900
+            boxMismatchText: '#fca5a5',     // Red 300
+        };
+    }
+
+    return {
+        wrapperBg: '#f8fafc',               // Slate 50
+        stickyBg: 'rgba(248, 250, 252, 0.95)',
+        stickyBorder: '#cbd5e1',           // Slate 300
+        rulerText: '#475569',              // Slate 600
+        rulerMajorTick: '#475569',
+        rulerMinorTick: '#cbd5e1',
+        refBg: '#dbeafe',                  // Blue 100
+        refBorder: '#bfdbfe',              // Blue 200
+        refText: '#1e40af',                // Blue 800
+        primerIdText: '#1e293b',           // Slate 800
+        boxMatchBg: '#e2e8f0',             // Slate 200
+        boxMatchText: '#334155',           // Slate 700
+        boxMismatchBg: '#fee2e2',          // Red 100
+        boxMismatchText: '#dc2626',        // Red 600
+    };
+}
+
+// Track active map redraw callback to trigger on theme switch
+let redrawCurrentMap: (() => void) | null = null;
+
 function drawGenomeMap(sampleId: string) {
     mapContainer.innerHTML = ""; // Clear old map
+    redrawCurrentMap = null;
 
     const sampleResults = allResults.filter(r => r.sample_id === sampleId && r.start_pos > 0);
     const fullSampleSeq = sampleSequences.get(sampleId) || "";
     
     if (sampleResults.length === 0 || !fullSampleSeq) {
-        mapContainer.innerHTML = `<p style="text-align: center; color: #9ca3af; padding: 50px;">No valid primer alignments found for this sample.</p>`;
+        mapContainer.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 50px;">No valid primer alignments found for this sample.</p>`;
         return;
     }
 
@@ -767,12 +812,13 @@ function drawGenomeMap(sampleId: string) {
     const contentHeight = RULER_HEIGHT + REF_SEQ_HEIGHT + (parsedResults.length * (ROW_HEIGHT + ROW_GAP)) + 50;
 
     // 2. Setup the DOM structure for Native Scrolling
+    const initialColors = getCanvasColors();
     const wrapper = document.createElement('div');
     wrapper.style.width = "100%";
     wrapper.style.height = "500px";
     wrapper.style.overflow = "auto";       // Native scrollbars!
     wrapper.style.position = "relative";
-    wrapper.style.backgroundColor = "#f8fafc";
+    wrapper.style.backgroundColor = initialColors.wrapperBg;
     wrapper.style.borderRadius = "6px";
     
     // The "Spacer" forces the wrapper to have scrollbars matching the virtual genome size
@@ -831,6 +877,10 @@ function drawGenomeMap(sampleId: string) {
     // 4. Main Render Loop
     function render() {
         if (!ctx) return;
+
+        // Fetch latest palette based on active theme
+        const colors = getCanvasColors();
+        wrapper.style.backgroundColor = colors.wrapperBg;
         
         // The source of truth for position is the native scrollbars
         const panX = wrapper.scrollLeft / zoom;
@@ -871,16 +921,16 @@ function drawGenomeMap(sampleId: string) {
                     const isMismatch = primer.mismatchIndices.has(i);
 
                     // Draw Box
-                    ctx.fillStyle = isMismatch ? "#fee2e2" : "#e2e8f0";
+                    ctx.fillStyle = isMismatch ? colors.boxMismatchBg : colors.boxMatchBg;
                     ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
 
                     // Draw Letter
-                    ctx.fillStyle = isMismatch ? "#dc2626" : "#475569";
+                    ctx.fillStyle = isMismatch ? colors.boxMismatchText : colors.boxMatchText;
                     ctx.fillText(seq[i], charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
                 }
                 
                 // Draw Primer ID to the left
-                ctx.fillStyle = "#1e293b";
+                ctx.fillStyle = colors.primerIdText;
                 ctx.textAlign = "right";
                 ctx.fillText((primer.is_forward ? "➔ " : "⬅ ") + primer.primer_id, startX - 10, yPos + (ROW_HEIGHT / 2));
                 ctx.textAlign = "center"; // Reset
@@ -930,12 +980,12 @@ function drawGenomeMap(sampleId: string) {
         });
 
         // --- DRAW STICKY HEADER ---
-        ctx.fillStyle = "rgba(248, 250, 252, 0.95)";
+        ctx.fillStyle = colors.stickyBg;
         ctx.fillRect(0, 0, width, stickyTopHeight);
         ctx.beginPath();
         ctx.moveTo(0, stickyTopHeight);
         ctx.lineTo(width, stickyTopHeight);
-        ctx.strokeStyle = "#94a3b8";
+        ctx.strokeStyle = colors.stickyBorder;
         ctx.stroke();
 
         // --- DRAW REFERENCE SEQUENCE ---
@@ -951,21 +1001,21 @@ function drawGenomeMap(sampleId: string) {
                 const charX = (i - panX) * zoom;
                 
                 // Highlight Box
-                ctx.fillStyle = "#dbeafe";
+                ctx.fillStyle = colors.refBg;
                 ctx.fillRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
                 
                 // Border separator
-                ctx.strokeStyle = "#bfdbfe";
+                ctx.strokeStyle = colors.refBorder;
                 ctx.strokeRect(charX, RULER_HEIGHT, zoom, REF_SEQ_HEIGHT);
                 
                 // Letter
-                ctx.fillStyle = "#1e40af";
+                ctx.fillStyle = colors.refText;
                 ctx.fillText(fullSampleSeq[i].toUpperCase(), charX + (zoom / 2), RULER_HEIGHT + (REF_SEQ_HEIGHT / 2));
             }
         }
 
         // --- DRAW RULER ---
-        ctx.fillStyle = "#475569";
+        ctx.fillStyle = colors.rulerText;
         ctx.font = "12px sans-serif";
         ctx.textAlign = "center";
         
@@ -994,7 +1044,7 @@ function drawGenomeMap(sampleId: string) {
             ctx.beginPath();
             ctx.moveTo(tickX, RULER_HEIGHT);
             ctx.lineTo(tickX, RULER_HEIGHT - (isMajor ? 8 : 4));
-            ctx.strokeStyle = isMajor ? "#475569" : "#cbd5e1";
+            ctx.strokeStyle = isMajor ? colors.rulerMajorTick : colors.rulerMinorTick;
             ctx.stroke();
 
             if (isMajor) {
@@ -1002,6 +1052,9 @@ function drawGenomeMap(sampleId: string) {
             }
         }
     }
+
+    // Register active callback for instant theme updates
+    redrawCurrentMap = () => render();
 
     // 5. User Interaction (Zoom, Scroll, and Pan)
     
@@ -1242,6 +1295,10 @@ function applyTheme(theme: string) {
     } else {
         document.documentElement.setAttribute('data-theme', theme);
         themeToggleCb.checked = theme === 'dark';
+    }
+
+    if (redrawCurrentMap) {
+        redrawCurrentMap();
     }
 }
 
