@@ -2,313 +2,314 @@ use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 use js_sys::Function;
 
-// -----------------------------------------
-// 1. DATA STRUCTURES (What we send to JS)
-// -----------------------------------------
 #[derive(Serialize, Deserialize)]
 pub struct MatchResult {
     pub sample_id: String,
     pub primer_id: String,
     pub is_forward: bool,
-    pub mismatches: usize,
+    pub mismatches: usize, // total edits subs+indels
+    pub gaps: usize,
+    pub cigar: String,
     pub start_pos: usize,
     pub end_pos: usize,
     pub sample_length: usize,
-    pub status: String,      // "Perfect", "Low Risk", "High Risk", "Failure"
-    pub alignment: String,   // A visual string e.g. ".....X.." (X = mismatch)
+    pub status: String,
+    pub alignment: String,
     pub mapped_primer_seq: String,
 }
 
-// -----------------------------------------
-// 2. HELPER FUNCTIONS
-// -----------------------------------------
-// Fast FASTA parser. Returns a Vec of (ID, Sequence)
-fn parse_fasta(fasta_str: &str) -> Vec<(String, String)> {
-    let mut records = Vec::new();
-    let mut current_id = String::new();
-    let mut current_seq = String::new();
-
+fn parse_fasta(fasta_str: &str) -> Vec<(String,String)> {
+    let mut records=Vec::new(); let mut cur_id=String::new(); let mut cur_seq=String::new();
     for line in fasta_str.lines() {
-        let line = line.trim();
-        if line.is_empty() { continue; }
-        
+        let line=line.trim(); if line.is_empty(){continue;}
         if line.starts_with('>') {
-            if !current_id.is_empty() {
-                records.push((current_id.clone(), current_seq.clone()));
-                current_seq.clear();
-            }
-            current_id = line[1..].to_string();
-        } else {
-            current_seq.push_str(&line.to_uppercase());
-        }
+            if !cur_id.is_empty(){records.push((cur_id.clone(),cur_seq.clone()));cur_seq.clear();}
+            cur_id=line[1..].to_string();
+        } else {cur_seq.push_str(&line.to_uppercase());}
     }
-    if !current_id.is_empty() {
-        records.push((current_id, current_seq));
-    }
+    if !cur_id.is_empty(){records.push((cur_id,cur_seq));}
     records
 }
-
-// Advanced Reverse Complement (Handles all IUPAC codes)
-fn reverse_complement(seq: &str) -> String {
+fn reverse_complement(seq:&str)->String{
     seq.chars().rev().map(|c| match c {
-        'A' => 'T', 'T' => 'A', 'U' => 'A', 'C' => 'G', 'G' => 'C',
-        'Y' => 'R', 'R' => 'Y', 'W' => 'W', 'S' => 'S', 'K' => 'M',
-        'M' => 'K', 'D' => 'H', 'H' => 'D', 'V' => 'B', 'B' => 'V',
-        'N' => 'N', '-' => '-',
-        _ => c, // Keep unexpected characters as-is
-    }).collect()
+        'A'=>'T','T'=>'A','U'=>'A','C'=>'G','G'=>'C','M'=>'K','K'=>'M',
+        'R'=>'Y','Y'=>'R','W'=>'W','S'=>'S','B'=>'V','V'=>'B','D'=>'H','H'=>'D','N'=>'N','-'=>'-',
+        _=>c,}).collect()
 }
-
-// Build a static lookup table for lightning-fast bitmask retrieval
-const fn build_iupac_table() -> [u8; 256] {
-    let mut table = [0; 256];
-    table[b'A' as usize] = 0b00001;
-    table[b'C' as usize] = 0b00010;
-    table[b'G' as usize] = 0b00100;
-    table[b'T' as usize] = 0b01000;
-    table[b'U' as usize] = 0b01000;
-    
-    table[b'R' as usize] = 0b00101; // A or G
-    table[b'Y' as usize] = 0b01010; // C or T
-    table[b'S' as usize] = 0b00110; // G or C
-    table[b'W' as usize] = 0b01001; // A or T
-    table[b'K' as usize] = 0b01100; // G or T
-    table[b'M' as usize] = 0b00011; // A or C
-    
-    table[b'B' as usize] = 0b01110; // C, G, T
-    table[b'D' as usize] = 0b01101; // A, G, T
-    table[b'H' as usize] = 0b01011; // A, C, T
-    table[b'V' as usize] = 0b00111; // A, C, G
-    
-    table[b'N' as usize] = 0b01111; // Any base
-    table[b'-' as usize] = 0b10000; // Gap matches gap
-    table
+const fn build_iupac_table()->[u8;256]{
+    let mut t=[0;256];
+    t[b'A' as usize]=0b0001; t[b'C' as usize]=0b0010; t[b'G' as usize]=0b0100;
+    t[b'T' as usize]=0b1000; t[b'U' as usize]=0b1000;
+    t[b'R' as usize]=0b0101; t[b'Y' as usize]=0b1010; t[b'S' as usize]=0b0110;
+    t[b'W' as usize]=0b1001; t[b'K' as usize]=0b1100; t[b'M' as usize]=0b0011;
+    t[b'B' as usize]=0b1110; t[b'D' as usize]=0b1101; t[b'H' as usize]=0b1011;
+    t[b'V' as usize]=0b0111; t[b'N' as usize]=0b1111; t[b'-' as usize]=0b10000;
+    t
 }
-const IUPAC_TABLE: [u8; 256] = build_iupac_table();
-
-// Checks if two bases are biologically compatible
+const IUPAC_TABLE:[u8;256]=build_iupac_table();
 #[inline(always)]
-fn is_iupac_match(primer_base: u8, ref_base: u8) -> bool {
-    // Fast path: Exact letters match
-    if primer_base == ref_base { return true; }
-    
-    // If the reference genome has an 'N', treat it as a mismatch. 
-    // This prevents primers from magnetically snapping to N-stretches.
-    if ref_base == b'N' { return false; }
-    
-    let mask_p = IUPAC_TABLE[primer_base as usize];
-    let mask_r = IUPAC_TABLE[ref_base as usize];
-    
-    // If either letter is invalid/unknown (mask is 0), they don't match
-    if mask_p == 0 || mask_r == 0 { return false; }
-    
-    // Do they share at least one concrete base?
-    (mask_p & mask_r) != 0
+fn is_iupac_match(p:u8,r:u8)->bool{
+    if p==r{return true;} if r==b'N'{return false;}
+    let mp=IUPAC_TABLE[p as usize]; let mr=IUPAC_TABLE[r as usize];
+    if mp==0||mr==0{return false;} (mp&mr)!=0
 }
 
-/// Fast mismatch counter
-#[inline]
-fn count_mismatches_with_bailout(
-    primer: &[u8], 
-    window: &[u8], 
-    max_allowed: usize
-) -> Option<(usize, usize, bool)> {
-    let len = primer.len();
-    let mut total = 0;
-    let mut critical = 0;
-    let mut abs_3_broken = false;
+// ---------- Peq ----------
+enum PeqCache{ Single([u64;256]), Multi(Vec<Vec<u64>>,usize), }
 
-    for i in 0..len {
-        if !is_iupac_match(primer[i], window[i]) {
-            total += 1;
-            if total > max_allowed { return None; } // bail early
-            
-            if i >= len.saturating_sub(5) { critical += 1; }
-            if i == len - 1 { abs_3_broken = true; }
+fn build_peq_single(p:&[u8])->[u64;256]{
+    let mut peq=[0u64;256];
+    for (i,&pb) in p.iter().enumerate(){
+        let bit=1u64<<i; let mp=IUPAC_TABLE[pb as usize];
+        for c in 0..256{
+            let cb=c as u8;
+            let m=if pb==cb{true}else if cb==b'N'{false}else{
+                let mr=IUPAC_TABLE[c]; mp!=0&&mr!=0&&(mp&mr)!=0};
+            if m{peq[c]|=bit;}
+        }
+    } peq
+}
+fn build_peq_multi(p:&[u8])->(Vec<Vec<u64>>,usize){
+    let nb=(p.len()+63)/64; let mut peq=vec![vec![0u64;nb];256];
+    for (i,&pb) in p.iter().enumerate(){
+        let b=i/64; let bit=1u64<<(i%64); let mp=IUPAC_TABLE[pb as usize];
+        for c in 0..256{
+            let cb=c as u8;
+            let m=if pb==cb{true}else if cb==b'N'{false}else{
+                let mr=IUPAC_TABLE[c]; mp!=0&&mr!=0&&(mp&mr)!=0};
+            if m{peq[c][b]|=bit;}
+        }
+    } (peq,nb)
+}
+fn build_peq_cached(p:&[u8])->PeqCache{
+    if p.len()<=64{PeqCache::Single(build_peq_single(p))}
+    else{let (t,n)=build_peq_multi(p); PeqCache::Multi(t,n)}
+}
+
+// ---------- Myers substring ----------
+fn myers_single(peq:&[u64;256], text:&[u8], m:usize)->(usize,Vec<usize>){
+    let mut vp=!0u64; let mut vn=0u64;
+    let mut score=m as i32; let mut best=i32::MAX;
+    let mut cands=Vec::new(); let mask=1u64<<(m-1);
+    for (j,&cb) in text.iter().enumerate(){
+        let eq=peq[cb as usize];
+        let x=eq|vn;
+        let d0=((vp.wrapping_add(x&vp))^vp)|x;
+        let hn=vp&d0; let hp=vn|!(vp|d0);
+        let x2=hp<<1; // substring inject 0
+        vn=x2&d0; vp=(hn<<1)|!(x2|d0);
+        if (hp&mask)!=0{score+=1;}else if (hn&mask)!=0{score-=1;}
+        if score<best{best=score;cands.clear();cands.push(j);if best==0{break;}}
+        else if score==best&&best<=6&&cands.len()<50{cands.push(j);}
+    }
+    if cands.is_empty(){return (m,Vec::new());}
+    (best as usize,cands)
+}
+fn myers_multi(peq:&[Vec<u64>], text:&[u8], m:usize, nb:usize)->(usize,Vec<usize>){
+    let mut vp=vec![u64::MAX;nb]; let mut vn=vec![0u64;nb];
+    let mut score=m as i32; let mut best=i32::MAX; let mut cands=Vec::new();
+    let last=nb-1; let mask=1u64<<((m-1)%64);
+    for (j,&cb) in text.iter().enumerate(){
+        let mut c_add=0u64; let mut hp_c=0u64; let mut hn_c=0u64;
+        let mut hp_l=0u64; let mut hn_l=0u64;
+        for b in 0..nb{
+            let eq=peq[cb as usize][b];
+            let x=eq|vn[b]; let xv=x&vp[b];
+            let sum=(vp[b] as u128)+(xv as u128)+(c_add as u128);
+            let s64=sum as u64; c_add=(sum>>64) as u64;
+            let d0=(s64^vp[b])|x;
+            let hn=vp[b]&d0; let hp=vn[b]|!(vp[b]|d0);
+            if b==last{hp_l=hp;hn_l=hn;}
+            let hp_msb=(hp>>63)&1; let hn_msb=(hn>>63)&1;
+            let xs=(hp<<1)|hp_c;
+            vn[b]=xs&d0; vp[b]=((hn<<1)|hn_c)|!(xs|d0);
+            hp_c=hp_msb; hn_c=hn_msb;
+        }
+        if (hp_l&mask)!=0{score+=1;}else if (hn_l&mask)!=0{score-=1;}
+        if score<best{best=score;cands.clear();cands.push(j);if best==0{break;}}
+        else if score==best&&best<=6&&cands.len()<50{cands.push(j);}
+    }
+    if cands.is_empty(){return (m,Vec::new());}
+    (best as usize,cands)
+}
+
+// ---------- window traceback ----------
+struct WAln{total:usize,subs:usize,gaps:usize,critical:usize,abs3:bool,
+    start_in_win:usize, aln_str:String, aln_p:String, cigar:String,}
+
+fn align_window(p:&[u8], win:&[u8], is_fwd:bool)->WAln{
+    let m=p.len(); let w=win.len(); let st=w+1;
+    let mut dp=vec![0u16;(m+1)*st];
+    for i in 1..=m{dp[i*st]=i as u16;}
+    for i in 1..=m{
+        let pb=p[i-1]; let rb0=i*st; let pr=(i-1)*st;
+        for j in 1..=w{
+            let cost=if is_iupac_match(pb,win[j-1]){0}else{1};
+            let d=dp[pr+j-1]+cost; let u=dp[pr+j]+1; let l=dp[rb0+j-1]+1;
+            let mut b=d; if u<b{b=u;} if l<b{b=l;} dp[rb0+j]=b;
         }
     }
-    Some((total, critical, abs_3_broken))
-}
-
-/// Only called once for the winning position
-fn build_alignment_string(primer: &[u8], window: &[u8]) -> String {
-    let len = primer.len();
-    let mut s = String::with_capacity(len + len / 4);
-    for i in 0..len {
-        if is_iupac_match(primer[i], window[i]) {
-            s.push(window[i] as char);
-        } else {
-            s.push('[');
-            s.push(window[i] as char);
-            s.push(']');
+    let mut i=m; let mut j=w;
+    let mut ap_r=Vec::with_capacity(m+4); let mut ar_r=Vec::with_capacity(m+4);
+    let mut op_r=Vec::with_capacity(m+4); // 0=diag,1=I(gap ref),2=D(gap primer)
+    while i>0{
+        let cur=dp[i*st+j];
+        let mut took=false;
+        if j>0{
+            let cost=if is_iupac_match(p[i-1],win[j-1]){0}else{1};
+            if cur==dp[(i-1)*st+j-1]+cost{
+                ap_r.push(p[i-1]); ar_r.push(win[j-1]); op_r.push(0u8); i-=1;j-=1;took=true;
+            }
+        }
+        if took{continue;}
+        if cur==dp[(i-1)*st+j]+1{
+            ap_r.push(p[i-1]); ar_r.push(b'-'); op_r.push(1u8); i-=1; continue;
+        }
+        ap_r.push(b'-'); ar_r.push(win[j-1]); op_r.push(2u8); j-=1;
+    }
+    let start_in_win=j;
+    ap_r.reverse(); ar_r.reverse(); op_r.reverse();
+    let l=ap_r.len();
+    let mut aln_str=String::with_capacity(l+l/4);
+    let mut ops:Vec<(char,usize)>=Vec::new();
+    let mut subs=0; let mut gaps=0;
+    for k in 0..l{
+        let op=op_r[k]; let qb=ap_r[k]; let rb=ar_r[k];
+        let c:char;
+        if op==2{ // D
+            c='D'; gaps+=1; aln_str.push('['); aln_str.push(rb as char); aln_str.push(']');
+        }else if op==1{ // I -> {-} non-consuming
+            c='I'; gaps+=1; aln_str.push_str("{-}");
+        }else if is_iupac_match(qb,rb){c='='; aln_str.push(rb as char);}
+        else{c='X'; subs+=1; aln_str.push('['); aln_str.push(rb as char); aln_str.push(']');}
+        if let Some(la)=ops.last_mut(){if la.0==c{la.1+=1;}else{ops.push((c,1));}}
+        else{ops.push((c,1));}
+    }
+    let mut cigar=String::new();
+    for (o,n) in ops{cigar.push_str(&n.to_string()); cigar.push(o);}
+    // critical orientation-aware
+    let mut crit=0; let mut abs3=false;
+    if is_fwd{
+        let mut pos=Vec::new();
+        for (idx,&q) in ap_r.iter().enumerate().rev(){if op_r[idx]!=2{if q!=b'-'||op_r[idx]==0{
+            // primer base exists if not D (D has q='-' gap). Diag with literal '-' still counts as primer base.
+            // D is the only case with no primer base.
+            pos.push(idx); if pos.len()==5{break;}
+        }}}
+        // Actually D has no primer base, I+diag have primer base (even if literal '-')
+        // Above logic double counts; simplify: primer base exists iff op!=2
+        // Recompute correctly:
+        pos.clear();
+        for idx in (0..l).rev(){if op_r[idx]!=2{pos.push(idx); if pos.len()==5{break;}}}
+        if let Some(&lc)=pos.first(){
+            if op_r[lc]==1||!is_iupac_match(ap_r[lc],ar_r[lc]){abs3=true;}
+            // if op==1, ar='-' gap, mismatch
+        }
+        if !pos.is_empty(){
+            let s=*pos.iter().min().unwrap();
+            for c in s..l{
+                if op_r[c]!=0{crit+=1;}
+                else if !is_iupac_match(ap_r[c],ar_r[c]){crit+=1;}
+            }
+        }
+    }else{
+        let mut pos=Vec::new();
+        for idx in 0..l{if op_r[idx]!=2{pos.push(idx); if pos.len()==5{break;}}}
+        if let Some(&fc)=pos.first(){
+            if op_r[fc]==1||!is_iupac_match(ap_r[fc],ar_r[fc]){abs3=true;}
+        }
+        if !pos.is_empty(){
+            let e=*pos.iter().max().unwrap();
+            for c in 0..=e{
+                if op_r[c]!=0{crit+=1;}
+                else if !is_iupac_match(ap_r[c],ar_r[c]){crit+=1;}
+            }
         }
     }
-    s
+    WAln{total:subs+gaps,subs,gaps,critical:crit,abs3,
+        start_in_win, aln_str, aln_p:String::from_utf8(ap_r).unwrap(), cigar}
 }
 
-// Helper function to find the best alignment for a specific sequence
-fn find_best_alignment(
-    p_bytes: &[u8], 
-    s_bytes: &[u8], 
-    bound_total: usize, 
-    bound_crit: usize
-) -> Option<(usize, usize, bool, usize, String)> {
-    let p_len = p_bytes.len();
-    let mut best_mismatches = bound_total;
-    let mut best_critical = bound_crit;
-    let mut best_absolute_3 = false;
-    let mut best_index = 0;
-    let mut found_better = false;
+struct Best{total:usize,critical:usize,abs3:bool,start:usize,end:usize,
+    aln:String,mapped:String,gaps:usize,cigar:String,}
 
-    for i in 0..=(s_bytes.len() - p_len) {
-        let window = &s_bytes[i..i + p_len];
-        
-        let Some((total, crit, abs_3)) = count_mismatches_with_bailout(p_bytes, window, best_mismatches) else { 
-            continue; 
+fn find_best(p:&[u8],s:&[u8],peq:&PeqCache,bt:usize,bc:usize,is_fwd:bool)->Option<Best>{
+    let m=p.len();
+    let (bs,cands)=match peq{
+        PeqCache::Single(q)=>myers_single(q,s,m),
+        PeqCache::Multi(q,n)=>myers_multi(q,s,m,*n),
+    };
+    if cands.is_empty(){return None;}
+    if bs>bt{return None;}
+    let mut best_o:Option<Best>=None;
+    for &e in &cands{
+        let sw=e.saturating_sub(m+bs+5);
+        let w=&s[sw..=e];
+        let wa=align_window(p,w,is_fwd);
+        let cur=Best{total:wa.total,critical:wa.critical,abs3:wa.abs3,
+            start:sw+wa.start_in_win,end:e,aln:wa.aln_str,mapped:wa.aln_p,gaps:wa.gaps,cigar:wa.cigar};
+        let better=match &best_o{
+            None=>true,
+            Some(b)=>cur.total<b.total||(cur.total==b.total&&cur.critical<b.critical)
+                ||(cur.total==b.total&&cur.critical==b.critical&&cur.start<b.start),
         };
-
-        if total < best_mismatches || (total == best_mismatches && crit < best_critical) {
-            best_mismatches = total;
-            best_critical = crit;
-            best_absolute_3 = abs_3;
-            best_index = i;
-            found_better = true;
+        if better{
+            let brk=cur.total==bs&&cur.critical==0;
+            best_o=Some(cur); if brk{break;}
         }
-        
-        if best_mismatches == 0 { break; }
     }
-
-    if found_better || bound_total == usize::MAX {
-        let best_window = &s_bytes[best_index..best_index + p_len];
-        let best_alignment = build_alignment_string(p_bytes, best_window);
-        Some((best_mismatches, best_critical, best_absolute_3, best_index, best_alignment))
-    } else {
-        None
-    }
+    best_o.and_then(|b|{
+        if b.total<bt||(b.total==bt&&b.critical<bc){Some(b)}else{None}
+    })
 }
 
-// -----------------------------------------
-// 3. THE MAIN ENGINE (Called from Web Worker)
-// -----------------------------------------
 #[wasm_bindgen]
-pub fn scan_genomes(
-    primers_fasta: &[u8],
-    samples_fasta: &[u8],
-    fwd_keyword: &str,
-    rev_keyword: &str,
-    auto_detect: bool,
-    progress_callback: &Function,
-) -> String {
-    let primers_str = std::str::from_utf8(primers_fasta).expect("Invalid UTF-8 in primers");
-    let samples_str = std::str::from_utf8(samples_fasta).expect("Invalid UTF-8 in samples");
-    let primers = parse_fasta(primers_str);
-    let samples = parse_fasta(samples_str);
-    let mut results: Vec<MatchResult> = Vec::new();
-
-    let total_scans = primers.len() * samples.len();
-    let mut completed_scans = 0;
-
-    for (p_id, p_seq) in primers {
-        let fwd_seq = p_seq.clone();
-        let rev_seq = reverse_complement(&p_seq);
-        let fwd_bytes = fwd_seq.as_bytes();
-        let rev_bytes = rev_seq.as_bytes();
-        let p_len = fwd_bytes.len();
-
-        let is_fwd_keyword = p_id.contains(fwd_keyword);
-        let is_rev_keyword = p_id.contains(rev_keyword);
-
-        for (s_id, s_seq) in &samples {
-            let s_bytes = s_seq.as_bytes();
-            
-            // SAFETY CHECKS
-            if p_len == 0 || s_bytes.len() < p_len {
-                results.push(MatchResult {
-                    sample_id: s_id.clone(), primer_id: p_id.clone(), is_forward: true,
-                    mismatches: 99, start_pos: 0, end_pos: 0, sample_length: s_bytes.len(),
-                    status: if p_len == 0 { "Invalid Primer" } else { "Not Found (Too short)" }.to_string(),
-                    alignment: "".to_string(),
-                    mapped_primer_seq: String::from_utf8(fwd_bytes.to_vec()).unwrap_or_default(),
-                });
-                completed_scans += 1;
-                continue;
+pub fn scan_genomes(primers_fasta:&[u8],samples_fasta:&[u8],
+    fwd_keyword:&str,rev_keyword:&str,auto_detect:bool,progress:&Function)->String{
+    let ps=std::str::from_utf8(primers_fasta).expect("primers");
+    let ss=std::str::from_utf8(samples_fasta).expect("samples");
+    let primers=parse_fasta(ps); let samples=parse_fasta(ss);
+    let mut res:Vec<MatchResult>=Vec::new();
+    let total=primers.len()*samples.len(); let mut done=0;
+    for (pid,pseq) in primers{
+        let fwd=pseq.clone(); let rev=reverse_complement(&pseq);
+        let fb=fwd.as_bytes(); let rb=rev.as_bytes(); let pl=fb.len();
+        let is_f=pid.contains(fwd_keyword); let is_r=pid.contains(rev_keyword);
+        let fq=if pl>0{Some(build_peq_cached(fb))}else{None};
+        let rq=if pl>0{Some(build_peq_cached(rb))}else{None};
+        for (sid,sseq) in &samples{
+            let sb=sseq.as_bytes();
+            if pl==0||sb.is_empty(){
+                res.push(MatchResult{sample_id:sid.clone(),primer_id:pid.clone(),
+                    is_forward:true,mismatches:99,gaps:0,cigar:String::new(),
+                    start_pos:0,end_pos:0,sample_length:sb.len(),
+                    status:if pl==0{"Invalid Primer"}else{"Not Found"}.to_string(),
+                    alignment:String::new(),mapped_primer_seq:String::from_utf8(fb.to_vec()).unwrap_or_default()});
+                done+=1; continue;
             }
-
-            let is_forward;
-            let best_stats;
-            let mapped_bytes;
-
-            if auto_detect {
-                // PASS 1: Unbounded Forward Scan
-                let fwd_stats = find_best_alignment(fwd_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
-                
-                if fwd_stats.0 == 0 {
-                    // Perfect forward match, skip reverse entirely
-                    is_forward = true;
-                    best_stats = fwd_stats;
-                    mapped_bytes = fwd_bytes;
-                } else {
-                    // PASS 2: Bounded Reverse Scan
-                    if let Some(rev_stats) = find_best_alignment(rev_bytes, s_bytes, fwd_stats.0, fwd_stats.1) {
-                        is_forward = false;
-                        best_stats = rev_stats;
-                        mapped_bytes = rev_bytes;
-                    } else {
-                        // Reverse didn't beat forward (or tied, tie goes to forward)
-                        is_forward = true;
-                        best_stats = fwd_stats;
-                        mapped_bytes = fwd_bytes;
-                    }
-                }
-            } else {
-                // FALLBACK TO STRICT KEYWORDS
-                if is_rev_keyword && !is_fwd_keyword {
-                    is_forward = false;
-                    best_stats = find_best_alignment(rev_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
-                    mapped_bytes = rev_bytes;
-                } else {
-                    is_forward = true;
-                    best_stats = find_best_alignment(fwd_bytes, s_bytes, usize::MAX, usize::MAX).unwrap();
-                    mapped_bytes = fwd_bytes;
-                }
-            }
-
-            let (best_total_mismatches, best_critical, best_absolute_3, best_index, best_alignment) = best_stats;
-
-            // --- GRADING LOGIC ---
-            let status = if best_total_mismatches == 0 {
-                "Perfect"
-            } else if best_absolute_3 || best_critical >= 2 || best_total_mismatches > 5 {
-                "Failure"
-            } else if best_critical == 1 || best_total_mismatches >= 4 {
-                "High Risk"
-            } else {
-                "Low Risk"
+            let (is_fwd,best)=if auto_detect{
+                let f=find_best(fb,sb,fq.as_ref().unwrap(),usize::MAX,usize::MAX,true).unwrap();
+                if f.total==0{(true,f)}
+                else if let Some(r)=find_best(rb,sb,rq.as_ref().unwrap(),f.total,f.critical,false){(false,r)}
+                else{(true,f)}
+            }else{
+                if is_r&&!is_f{(false,find_best(rb,sb,rq.as_ref().unwrap(),usize::MAX,usize::MAX,false).unwrap())}
+                else{(true,find_best(fb,sb,fq.as_ref().unwrap(),usize::MAX,usize::MAX,true).unwrap())}
             };
-
-            let (start, end) = (best_index + 1, best_index + p_len);
-
-            results.push(MatchResult {
-                sample_id: s_id.clone(),
-                primer_id: p_id.clone(),
-                is_forward,
-                mismatches: best_total_mismatches,
-                start_pos: start,
-                end_pos: end,
-                sample_length: s_bytes.len(),
-                status: status.to_string(),
-                alignment: best_alignment,
-                mapped_primer_seq: String::from_utf8(mapped_bytes.to_vec()).unwrap(),
-            });
-            
-            completed_scans += 1;
-            let report_interval = (total_scans / 200).max(1);
-            
-            if completed_scans % report_interval == 0 || completed_scans == total_scans {
-                let percent = (completed_scans as f64 / total_scans as f64) * 100.0;
-                let _ = progress_callback.call1(&JsValue::null(), &JsValue::from_f64(percent));
+            let st=if best.total==0{"Perfect"}
+                else if best.abs3||best.critical>=2||best.total>5{"Failure"}
+                else if best.critical==1||best.total>=4{"High Risk"}else{"Low Risk"};
+            res.push(MatchResult{sample_id:sid.clone(),primer_id:pid.clone(),is_forward:is_fwd,
+                mismatches:best.total,gaps:best.gaps,cigar:best.cigar,
+                start_pos:best.start+1,end_pos:best.end+1,sample_length:sb.len(),
+                status:st.to_string(),alignment:best.aln,mapped_primer_seq:best.mapped});
+            done+=1;
+            let iv=(total/200).max(1);
+            if done%iv==0||done==total{
+                let pc=(done as f64/total as f64)*100.0;
+                let _=progress.call1(&JsValue::NULL,&JsValue::from_f64(pc));
             }
         }
     }
-    serde_json::to_string(&results).unwrap()
+    serde_json::to_string(&res).unwrap()
 }
