@@ -7,51 +7,102 @@ pub struct MatchResult {
     pub sample_id: String,
     pub primer_id: String,
     pub is_forward: bool,
-    pub mismatches: usize, // total edits subs+indels
+    pub mismatches: usize,   // total edits subs+indels
     pub gaps: usize,
     pub cigar: String,
     pub start_pos: usize,
     pub end_pos: usize,
     pub sample_length: usize,
-    pub status: String,
-    pub alignment: String,
+    pub status: String,      // "Perfect", "Low Risk", "High Risk", "Failure"
+    pub alignment: String,   // A visual string e.g. ".....X.." (X = mismatch)
     pub mapped_primer_seq: String,
 }
 
-fn parse_fasta(fasta_str: &str) -> Vec<(String,String)> {
-    let mut records=Vec::new(); let mut cur_id=String::new(); let mut cur_seq=String::new();
+// -----------------------------------------
+// 2. HELPER FUNCTIONS
+// -----------------------------------------
+// Fast FASTA parser. Returns a Vec of (ID, Sequence)
+fn parse_fasta(fasta_str: &str) -> Vec<(String, String)> {
+    let mut records = Vec::new();
+    let mut current_id = String::new();
+    let mut current_seq = String::new();
+
     for line in fasta_str.lines() {
-        let line=line.trim(); if line.is_empty(){continue;}
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        
         if line.starts_with('>') {
-            if !cur_id.is_empty(){records.push((cur_id.clone(),cur_seq.clone()));cur_seq.clear();}
-            cur_id=line[1..].to_string();
-        } else {cur_seq.push_str(&line.to_uppercase());}
+            if !current_id.is_empty() {
+                records.push((current_id.clone(), current_seq.clone()));
+                current_seq.clear();
+            }
+            current_id = line[1..].to_string();
+        } else {
+            current_seq.push_str(&line.to_uppercase());
+        }
     }
-    if !cur_id.is_empty(){records.push((cur_id,cur_seq));}
+    if !current_id.is_empty() {
+        records.push((current_id, current_seq));
+    }
     records
 }
-fn reverse_complement(seq:&str)->String{
+
+// Advanced Reverse Complement (Handles all IUPAC codes)
+fn reverse_complement(seq: &str) -> String {
     seq.chars().rev().map(|c| match c {
-        'A'=>'T','T'=>'A','U'=>'A','C'=>'G','G'=>'C','M'=>'K','K'=>'M',
-        'R'=>'Y','Y'=>'R','W'=>'W','S'=>'S','B'=>'V','V'=>'B','D'=>'H','H'=>'D','N'=>'N','-'=>'-',
-        _=>c,}).collect()
+        'A' => 'T', 'T' => 'A', 'U' => 'A', 'C' => 'G', 'G' => 'C',
+        'Y' => 'R', 'R' => 'Y', 'W' => 'W', 'S' => 'S', 'K' => 'M',
+        'M' => 'K', 'D' => 'H', 'H' => 'D', 'V' => 'B', 'B' => 'V',
+        'N' => 'N', '-' => '-',
+        _ => c, // Keep unexpected characters as-is
+    }).collect()
 }
-const fn build_iupac_table()->[u8;256]{
-    let mut t=[0;256];
-    t[b'A' as usize]=0b0001; t[b'C' as usize]=0b0010; t[b'G' as usize]=0b0100;
-    t[b'T' as usize]=0b1000; t[b'U' as usize]=0b1000;
-    t[b'R' as usize]=0b0101; t[b'Y' as usize]=0b1010; t[b'S' as usize]=0b0110;
-    t[b'W' as usize]=0b1001; t[b'K' as usize]=0b1100; t[b'M' as usize]=0b0011;
-    t[b'B' as usize]=0b1110; t[b'D' as usize]=0b1101; t[b'H' as usize]=0b1011;
-    t[b'V' as usize]=0b0111; t[b'N' as usize]=0b1111; t[b'-' as usize]=0b10000;
-    t
+
+// Build a static lookup table for lightning-fast bitmask retrieval
+const fn build_iupac_table() -> [u8; 256] {
+    let mut table = [0; 256];
+    table[b'A' as usize] = 0b00001;
+    table[b'C' as usize] = 0b00010;
+    table[b'G' as usize] = 0b00100;
+    table[b'T' as usize] = 0b01000;
+    table[b'U' as usize] = 0b01000;
+    
+    table[b'R' as usize] = 0b00101; // A or G
+    table[b'Y' as usize] = 0b01010; // C or T
+    table[b'S' as usize] = 0b00110; // G or C
+    table[b'W' as usize] = 0b01001; // A or T
+    table[b'K' as usize] = 0b01100; // G or T
+    table[b'M' as usize] = 0b00011; // A or C
+    
+    table[b'B' as usize] = 0b01110; // C, G, T
+    table[b'D' as usize] = 0b01101; // A, G, T
+    table[b'H' as usize] = 0b01011; // A, C, T
+    table[b'V' as usize] = 0b00111; // A, C, G
+    
+    table[b'N' as usize] = 0b01111; // Any base
+    table[b'-' as usize] = 0b10000; // Gap matches gap
+    table
 }
-const IUPAC_TABLE:[u8;256]=build_iupac_table();
+const IUPAC_TABLE: [u8; 256] = build_iupac_table();
+
+// Checks if two bases are biologically compatible
 #[inline(always)]
-fn is_iupac_match(p:u8,r:u8)->bool{
-    if p==r{return true;} if r==b'N'{return false;}
-    let mp=IUPAC_TABLE[p as usize]; let mr=IUPAC_TABLE[r as usize];
-    if mp==0||mr==0{return false;} (mp&mr)!=0
+fn is_iupac_match(primer_base: u8, ref_base: u8) -> bool {
+    // Fast path: Exact letters match
+    if primer_base == ref_base { return true; }
+    
+    // If the reference genome has an 'N', treat it as a mismatch. 
+    // This prevents primers from magnetically snapping to N-stretches.
+    if ref_base == b'N' { return false; }
+    
+    let mask_p = IUPAC_TABLE[primer_base as usize];
+    let mask_r = IUPAC_TABLE[ref_base as usize];
+    
+    // If either letter is invalid/unknown (mask is 0), they don't match
+    if mask_p == 0 || mask_r == 0 { return false; }
+    
+    // Do they share at least one concrete base?
+    (mask_p & mask_r) != 0
 }
 
 // ---------- Peq ----------
@@ -69,6 +120,7 @@ fn build_peq_single(p:&[u8])->[u64;256]{
         }
     } peq
 }
+
 fn build_peq_multi(p:&[u8])->(Vec<Vec<u64>>,usize){
     let nb=(p.len()+63)/64; let mut peq=vec![vec![0u64;nb];256];
     for (i,&pb) in p.iter().enumerate(){
@@ -81,6 +133,7 @@ fn build_peq_multi(p:&[u8])->(Vec<Vec<u64>>,usize){
         }
     } (peq,nb)
 }
+
 fn build_peq_cached(p:&[u8])->PeqCache{
     if p.len()<=64{PeqCache::Single(build_peq_single(p))}
     else{let (t,n)=build_peq_multi(p); PeqCache::Multi(t,n)}
@@ -105,6 +158,7 @@ fn myers_single(peq:&[u64;256], text:&[u8], m:usize)->(usize,Vec<usize>){
     if cands.is_empty(){return (m,Vec::new());}
     (best as usize,cands)
 }
+
 fn myers_multi(peq:&[Vec<u64>], text:&[u8], m:usize, nb:usize)->(usize,Vec<usize>){
     let mut vp=vec![u64::MAX;nb]; let mut vn=vec![0u64;nb];
     let mut score=m as i32; let mut best=i32::MAX; let mut cands=Vec::new();
