@@ -5,7 +5,18 @@ export async function exportToTsv(results: MatchResult[], primerFileName: string
   if (results.length === 0) return;
 
   // 1. Create the CSV Header
-  const headers = ["Sample ID", "Primer ID", "Orientation", "Start", "End", "Mismatches", "Status", "Alignment Map"];
+  const headers = [
+    "Sample ID",
+    "Primer ID",
+    "Orientation",
+    "Start",
+    "End",
+    "Total Edits",
+    "Gaps",
+    "CIGAR",
+    "Status",
+    "Alignment Map",
+  ];
 
   // 2. Map the data rows
   const rows = results.map(r => [
@@ -15,6 +26,8 @@ export async function exportToTsv(results: MatchResult[], primerFileName: string
     r.start_pos || "N/A",
     r.end_pos || "N/A",
     r.mismatches === 99 ? "N/A" : r.mismatches,
+    r.gaps ?? 0,
+    r.cigar ?? "N/A",
     r.status,
     r.alignment
   ].join("\t")); // Join columns with tabs
