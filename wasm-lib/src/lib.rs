@@ -293,7 +293,6 @@ fn myers_multi(peq: &[Vec<u64>], text: &[u8], m: usize, nb: usize) -> (usize, Ve
 // -----------------------------------------
 struct WAln {
     total: usize,
-    subs: usize,
     gaps: usize,
     critical: usize,
     abs3: bool,
@@ -468,7 +467,6 @@ fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
 
     WAln {
         total: subs + gaps,
-        subs,
         gaps,
         critical: crit,
         abs3,
