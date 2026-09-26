@@ -93,7 +93,7 @@ export class ResultsTableController {
 
       // Convert [T] into a red T, while keeping normal nucleotides black
       const formattedAlignment = safeAlignment.replace(
-        /\[([A-Z0-9-])\]/gi,
+        /(\[[^\]]+\]|\{[^\}]+\})/g,
         '<span style="color:red; font-weight:bold;">$1</span>'
       );
 
