@@ -58,6 +58,49 @@ function getCanvasColors(): CanvasPalette {
   };
 }
 
+interface AlignmentToken {
+  text: string;
+  isError: boolean;
+  consumesRef: boolean;
+}
+
+function parseAlignmentTokens(alignment: string): AlignmentToken[] {
+  const tokens: AlignmentToken[] = [];
+  let i = 0;
+  while (i < alignment.length) {
+    if (alignment[i] === '[') {
+      const end = alignment.indexOf(']', i);
+      if (end !== -1) {
+        tokens.push({
+          text: alignment.substring(i + 1, end),
+          isError: true,
+          consumesRef: true,
+        });
+        i = end + 1;
+        continue;
+      }
+    } else if (alignment[i] === '{') {
+      const end = alignment.indexOf('}', i);
+      if (end !== -1) {
+        tokens.push({
+          text: alignment.substring(i + 1, end),
+          isError: true,
+          consumesRef: false,
+        });
+        i = end + 1;
+        continue;
+      }
+    }
+    tokens.push({
+      text: alignment[i],
+      isError: false,
+      consumesRef: true,
+    });
+    i++;
+  }
+  return tokens;
+}
+
 // Track active map redraw callback to trigger on theme switch
 let activeRedrawFn: (() => void) | null = null;
 
@@ -88,20 +131,8 @@ export function drawGenomeMap(
   sampleResults.sort((a, b) => a.start_pos - b.start_pos);
 
   const parsedResults = sampleResults.map((p, index) => {
-    const mismatchIndices = new Set<number>();
-    let seqIndex = 0;
-    let i = 0;
-    while (i < p.alignment.length) {
-      if (p.alignment[i] === '[') {
-        mismatchIndices.add(seqIndex);
-        i += 3;
-        seqIndex++;
-      } else {
-        i++;
-        seqIndex++;
-      }
-    }
-    return { ...p, track: index, mismatchIndices };
+    const tokens = parseAlignmentTokens(p.alignment);
+    return { ...p, track: index, tokens };
   });
 
   const genomeLength = fullSampleSeq.length;
@@ -143,7 +174,7 @@ export function drawGenomeMap(
   wrapper.appendChild(canvas);
   mapContainer.appendChild(wrapper);
 
-  // --- SETUP TOOLTIP ---
+  // Setup tooltip
   const tooltip = document.createElement('div');
   tooltip.style.position = "fixed"; // Fixed prevents container overflow issues
   tooltip.style.display = "none";
@@ -202,32 +233,37 @@ export function drawGenomeMap(
 
     parsedResults.forEach(primer => {
       const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
-
       // Culling: Don't draw if it's scrolled off-screen (above ruler or below canvas)
       if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) return;
 
       const startX = (primer.start_pos - 1 - panX) * zoom;
       const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
-
       // Culling: Don't draw if it's panned completely off the left or right sides
       if (startX > width || startX + primerWidth < 0) return;
 
       if (showText) {
         // MICRO VIEW: Text
-        const seq = primer.mapped_primer_seq.toUpperCase();
-        for (let i = 0; i < seq.length; i++) {
-          const charX = startX + (i * zoom);
-          if (charX + zoom < 0 || charX > width) continue;
+        let currentRefOffset = 0;
 
-          const isMismatch = primer.mismatchIndices.has(i);
+        for (const token of primer.tokens) {
+          if (token.consumesRef) {
+            const charX = startX + (currentRefOffset * zoom);
+            if (charX + zoom >= 0 && charX <= width) {
+              ctx.fillStyle = token.isError ? colors.boxMismatchBg : colors.boxMatchBg;
+              ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
 
-          // Draw Box
-          ctx.fillStyle = isMismatch ? colors.boxMismatchBg : colors.boxMatchBg;
-          ctx.fillRect(charX, yPos, zoom, ROW_HEIGHT);
-
-          // Draw Letter
-          ctx.fillStyle = isMismatch ? colors.boxMismatchText : colors.boxMatchText;
-          ctx.fillText(seq[i], charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
+              ctx.fillStyle = token.isError ? colors.boxMismatchText : colors.boxMatchText;
+              ctx.fillText(token.text, charX + (zoom / 2), yPos + (ROW_HEIGHT / 2));
+            }
+            currentRefOffset++;
+          } else {
+            // Non-consuming deletion tick: draw mark between bases
+            const tickX = startX + (currentRefOffset * zoom);
+            if (tickX >= 0 && tickX <= width) {
+              ctx.fillStyle = "#a855f7"; // Purple indicator
+              ctx.fillRect(tickX - 1.5, yPos - 2, 3, ROW_HEIGHT + 4);
+            }
+          }
         }
 
         // Draw Primer ID to the left
@@ -245,7 +281,6 @@ export function drawGenomeMap(
 
         ctx.fillStyle = color;
         const visualWidth = Math.max(primerWidth, 15);
-
         // Dynamically calculate the arrowhead size (max 8px, but smaller if the box is tiny)
         const arrowSize = Math.min(8, visualWidth * 0.5);
 
@@ -279,7 +314,7 @@ export function drawGenomeMap(
       }
     });
 
-    // Header
+    // Sticky Header & Reference Track
     ctx.fillStyle = colors.stickyBg;
     ctx.fillRect(0, 0, width, stickyTopHeight);
     ctx.beginPath();
@@ -434,15 +469,16 @@ export function drawGenomeMap(
         <div><strong>Position:</strong> ${hoveredPrimer.start_pos.toLocaleString()} - ${hoveredPrimer.end_pos.toLocaleString()} bp</div>
         <div><strong>Direction:</strong> ${hoveredPrimer.is_forward ? 'Forward ➔' : 'Reverse ⬅'}</div>
         <div><strong>Status:</strong> <span style="color: ${color}; font-weight: bold;">${hoveredPrimer.status}</span></div>
-        <div><strong>Mismatches:</strong> ${hoveredPrimer.mismatches}</div>
+        <div><strong>Mismatches:</strong> ${hoveredPrimer.mismatches} (Gaps: ${hoveredPrimer.gaps})</div>
+        <div><strong>CIGAR:</strong> <span style="font-family: monospace;">${hoveredPrimer.cigar || 'N/A'}</span></div>
       `;
 
       // Position tooltip relative to the actual screen (clientX/Y) so it doesn't clip
       let leftPos = e.clientX + 15;
       const topPos = e.clientY + 15;
 
-      if (leftPos + 200 > window.innerWidth) {
-        leftPos = e.clientX - 215;
+      if (leftPos + 220 > window.innerWidth) {
+        leftPos = e.clientX - 235;
       }
 
       tooltip.style.left = `${leftPos}px`;
@@ -469,7 +505,6 @@ export function drawGenomeMap(
     if (!isDragging) return;
     const dx = e.pageX - startX;
     const dy = e.pageY - startY;
-
     // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders
     wrapper.scrollLeft = startScrollLeft - dx;
     wrapper.scrollTop = startScrollTop - dy;
