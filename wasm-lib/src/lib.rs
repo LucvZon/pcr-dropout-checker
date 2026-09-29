@@ -387,12 +387,14 @@ fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
             c = 'D';
             gaps += 1;
             aln_str.push('[');
-            aln_str.push(rb as char);
+            aln_str.push('-');
             aln_str.push(']');
         } else if op == 1 {
             c = 'I';
             gaps += 1;
-            aln_str.push_str("{-}");
+            aln_str.push('{');
+            aln_str.push(qb as char);
+            aln_str.push('}');
         } else if is_iupac_match(qb, rb) {
             c = '=';
             aln_str.push(rb as char);
