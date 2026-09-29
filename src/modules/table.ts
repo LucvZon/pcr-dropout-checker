@@ -91,10 +91,10 @@ export class ResultsTableController {
       const safePrimerId = escapeHTML(res.primer_id);
       const safeAlignment = escapeHTML(res.alignment);
 
-      // Convert [T] into a red T, while keeping normal nucleotides black
+      // Convert [T], [-], or {A} into red characters without brackets, while keeping normal nucleotides black
       const formattedAlignment = safeAlignment.replace(
-        /\[([A-Z0-9-])\]/gi,
-        '<span style="color:red; font-weight:bold;">$1</span>'
+        /\[([^\]]+)\]|\{([^}]+)\}/g,
+        (_match, p1, p2) => `<span style="color:red; font-weight:bold;">${p1 ?? p2}</span>`
       );
 
       tr.innerHTML = `
