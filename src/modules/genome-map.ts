@@ -58,13 +58,13 @@ function getCanvasColors(): CanvasPalette {
   };
 }
 
-interface AlignmentToken {
+export interface AlignmentToken {
   text: string;
   isError: boolean;
   consumesRef: boolean;
 }
 
-function parseAlignmentTokens(alignment: string): AlignmentToken[] {
+export function parseAlignmentTokens(alignment: string): AlignmentToken[] {
   const tokens: AlignmentToken[] = [];
   let i = 0;
   while (i < alignment.length) {
@@ -132,6 +132,12 @@ export function drawGenomeMap(
 
   const parsedResults = sampleResults.map((p, index) => {
     const tokens = parseAlignmentTokens(p.alignment);
+    // Ensure deletions show '-' in micro view
+    tokens.forEach((t, k) => {
+      if (t.consumesRef && t.isError && p.mapped_primer_seq && p.mapped_primer_seq[k] === '-') {
+        t.text = '-';
+      }
+    });
     return { ...p, track: index, tokens };
   });
 
@@ -257,7 +263,7 @@ export function drawGenomeMap(
             }
             currentRefOffset++;
           } else {
-            // Non-consuming deletion tick: draw mark between bases
+            // Non-consuming insertion tick: draw mark between bases
             const tickX = startX + (currentRefOffset * zoom);
             if (tickX >= 0 && tickX <= width) {
               ctx.fillStyle = "#a855f7"; // Purple indicator
