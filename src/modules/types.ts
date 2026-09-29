@@ -3,7 +3,7 @@ export interface MatchResult {
   primer_id: string;
   is_forward: boolean;
   mismatches: number;
-  gaps: numer;
+  gaps: number;
   cigar: string;
   start_pos: number;
   end_pos: number;
