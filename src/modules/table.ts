@@ -89,7 +89,26 @@ export class ResultsTableController {
       // Sanitize the raw IDs and alignment string
       const safeSampleId = escapeHTML(res.sample_id);
       const safePrimerId = escapeHTML(res.primer_id);
-      const safeAlignment = escapeHTML(res.alignment);
+
+      // Reconstruct alignment using primer bases from mapped_primer_seq
+      let safeAlignment = escapeHTML(res.alignment);
+      if (res.mapped_primer_seq) {
+        let k = 0;
+        safeAlignment = safeAlignment.replace(/\[[^\]]+\]|\{[^}]+\}|[A-Za-z-]/g, (token) => {
+          if (k < res.mapped_primer_seq.length) {
+            const pChar = res.mapped_primer_seq[k].toUpperCase();
+            k++;
+            if (token.startsWith('[')) {
+              return `[${pChar}]`;
+            } else if (token.startsWith('{')) {
+              return `{${pChar}}`;
+            } else {
+              return pChar;
+            }
+          }
+          return token;
+        });
+      }
 
       // Convert [T], [-], or {A} into red characters without brackets, while keeping normal nucleotides black
       const formattedAlignment = safeAlignment.replace(

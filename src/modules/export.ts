@@ -21,8 +21,28 @@ export async function exportToTsv(results: MatchResult[], primerFileName: string
 
   // 2. Map the data rows
   const rows = results.map(r => {
+    // Ensure alignment uses primer bases from mapped_primer_seq if available
+    let alignmentStr = r.alignment;
+    if (r.mapped_primer_seq) {
+      let k = 0;
+      alignmentStr = alignmentStr.replace(/\[[^\]]+\]|\{[^}]+\}|[A-Za-z-]/g, (token) => {
+        if (k < r.mapped_primer_seq.length) {
+          const pChar = r.mapped_primer_seq[k].toUpperCase();
+          k++;
+          if (token.startsWith('[')) {
+            return `[${pChar}]`;
+          } else if (token.startsWith('{')) {
+            return `{${pChar}}`;
+          } else {
+            return pChar;
+          }
+        }
+        return token;
+      });
+    }
+
     // For TSV export, use [-] for deletions and [A] for insertions
-    const tsvAlignment = r.alignment.replace(/\{([^}]+)\}/g, '[$1]');
+    const tsvAlignment = alignmentStr.replace(/\{([^}]+)\}/g, '[$1]');
     return [
       r.sample_id,
       r.primer_id,

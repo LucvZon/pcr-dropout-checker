@@ -397,12 +397,12 @@ fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
             aln_str.push('}');
         } else if is_iupac_match(qb, rb) {
             c = '=';
-            aln_str.push(rb as char);
+            aln_str.push(qb as char);
         } else {
             c = 'X';
             subs += 1;
             aln_str.push('[');
-            aln_str.push(rb as char);
+            aln_str.push(qb as char);
             aln_str.push(']');
         }
         if let Some(la) = ops.last_mut() {
