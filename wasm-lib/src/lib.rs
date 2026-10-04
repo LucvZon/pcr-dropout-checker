@@ -297,12 +297,13 @@ struct WAln {
     critical: usize,
     abs3: bool,
     start_in_win: usize,
+    end_in_win: usize,
     aln_str: String,
     aln_p: String,
     cigar: String,
 }
 
-fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
+fn align_window(p: &[u8], win: &[u8], is_fwd: bool, e_win: usize) -> WAln {
     let m = p.len();
     let w = win.len();
     let st = w + 1;
@@ -328,8 +329,44 @@ fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
         }
     }
 
+    // Determine the optimal ending column in row m
+    let search_start = e_win.saturating_sub(5).max(1);
+    let search_end = (e_win + 5).min(w);
+
+    let mut min_cost = u16::MAX;
+    for j in search_start..=search_end {
+        if dp[m * st + j] < min_cost {
+            min_cost = dp[m * st + j];
+        }
+    }
+
+    let mut best_j = e_win.min(w);
+    let mut best_diag = false;
+    let mut min_dist = usize::MAX;
+
+    for j in search_start..=search_end {
+        if dp[m * st + j] == min_cost {
+            let cost = if is_iupac_match(p[m - 1], win[j - 1]) { 0 } else { 1 };
+            let can_diag = dp[(m - 1) * st + j - 1] + cost == min_cost;
+            let dist = if j >= e_win { j - e_win } else { e_win - j };
+
+            // Prioritize diagonal alignment (substitution/match) over terminal insertion
+            if can_diag && !best_diag {
+                best_j = j;
+                best_diag = true;
+                min_dist = dist;
+            } else if can_diag == best_diag {
+                if dist < min_dist {
+                    best_j = j;
+                    min_dist = dist;
+                }
+            }
+        }
+    }
+
     let mut i = m;
-    let mut j = w;
+    let mut j = best_j;
+    let end_in_win = best_j;
     let mut ap_r = Vec::with_capacity(m + 4);
     let mut ar_r = Vec::with_capacity(m + 4);
     let mut op_r = Vec::with_capacity(m + 4); // 0=diag, 1=I(gap ref), 2=D(gap primer)
@@ -473,6 +510,7 @@ fn align_window(p: &[u8], win: &[u8], is_fwd: bool) -> WAln {
         critical: crit,
         abs3,
         start_in_win,
+        end_in_win,
         aln_str,
         aln_p: String::from_utf8(ap_r).unwrap_or_default(),
         cigar,
@@ -511,15 +549,17 @@ fn find_best(
     for &e in &cands {
         if e >= s.len() { continue; }
         let sw = e.saturating_sub(m + bs + 5);
-        if sw > e { continue; }
-        let w = &s[sw..=e];
-        let wa = align_window(p, w, is_fwd);
+        let ew = (e + bs + 5).min(s.len().saturating_sub(1));
+        if sw > ew { continue; }
+        let w = &s[sw..=ew];
+        let e_win = e - sw + 1;
+        let wa = align_window(p, w, is_fwd, e_win);
         let cur = Best {
             total: wa.total,
             critical: wa.critical,
             abs3: wa.abs3,
             start: sw + wa.start_in_win,
-            end: e,
+            end: sw + wa.end_in_win - 1,
             aln: wa.aln_str,
             mapped: wa.aln_p,
             gaps: wa.gaps,
