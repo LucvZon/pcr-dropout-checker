@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/pcr-dropout-checker/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PCR Dropout Checker</title>
-    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-CU75-25-.js"></script>
+    <script type="module" crossorigin src="/pcr-dropout-checker/assets/index-DD1__pxO.js"></script>
     <link rel="stylesheet" crossorigin href="/pcr-dropout-checker/assets/index-C5PlRTdF.css">
   </head>
   <body style="font-family: system-ui, sans-serif; margin: 0; padding: 20px;">
@@ -185,11 +185,19 @@
                 <label style="font-weight: bold; font-size: 14px; color: var(--text-main);">
                   Select Sample to Visualize:
                 </label><br>
-                <select
-                  id="sample-select"
-                  style="padding: 8px; margin-top: 5px; width: 100%; max-width: 400px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main); font-size: 14px;">
-                  <!-- Options populated by TypeScript -->
-                </select>
+                <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
+                  <select
+                    id="sample-select"
+                    style="padding: 8px; width: 100%; max-width: 400px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main); font-size: 14px;">
+                    <!-- Options populated by TypeScript -->
+                  </select>
+                  <button
+                    id="reset-view-btn"
+                    title="Reset zoom to full genome overview"
+                    style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap;">
+                    Reset View
+                  </button>
+                </div>
               </div>
               
               <!-- Export Buttons -->
@@ -218,6 +226,6 @@
     </div>
     
     <div id="toast-container"></div>
-    
+    
   </body>
 </html>
