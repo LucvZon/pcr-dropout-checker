@@ -103,10 +103,17 @@ export function parseAlignmentTokens(alignment: string): AlignmentToken[] {
 
 // Track active map redraw callback to trigger on theme switch
 let activeRedrawFn: (() => void) | null = null;
+let activeResetViewFn: (() => void) | null = null;
 
 export function redrawActiveGenomeMap(): void {
   if (activeRedrawFn) {
     activeRedrawFn();
+  }
+}
+
+export function resetActiveGenomeMapView(): void {
+  if (activeResetViewFn) {
+    activeResetViewFn();
   }
 }
 
@@ -118,6 +125,7 @@ export function drawGenomeMap(
 ): void {
   mapContainer.innerHTML = ""; // Clear old map
   activeRedrawFn = null;
+  activeResetViewFn = null;
 
   const sampleResults = allResults.filter(r => r.sample_id === sampleId && r.start_pos > 0);
   const fullSampleSeq = sampleSequences.get(sampleId) || "";
@@ -132,10 +140,15 @@ export function drawGenomeMap(
 
   const parsedResults = sampleResults.map((p, index) => {
     const tokens = parseAlignmentTokens(p.alignment);
-    // Ensure deletions show '-' in micro view
+    // Ensure all primer bases and deletions match the mapped primer sequence
     tokens.forEach((t, k) => {
-      if (t.consumesRef && t.isError && p.mapped_primer_seq && p.mapped_primer_seq[k] === '-') {
-        t.text = '-';
+      if (p.mapped_primer_seq && k < p.mapped_primer_seq.length) {
+        const pChar = p.mapped_primer_seq[k].toUpperCase();
+        if (pChar === '-') {
+          t.text = '-';
+        } else if (t.isError) {
+          t.text = pChar;
+        }
       }
     });
     return { ...p, track: index, tokens };
@@ -393,7 +406,17 @@ export function drawGenomeMap(
     }
   }
 
+  // Reset view to default zoom level fitting the full genome
+  function resetView() {
+    zoom = width / genomeLength;
+    spacer.style.width = `${genomeLength * zoom}px`;
+    wrapper.scrollLeft = 0;
+    wrapper.scrollTop = 0;
+    requestAnimationFrame(render);
+  }
+
   activeRedrawFn = () => render();
+  activeResetViewFn = resetView;
 
   // 5. User Interaction (Zoom, Scroll, and Pan)
 
@@ -412,6 +435,50 @@ export function drawGenomeMap(
     startY = e.pageY;
     startScrollLeft = wrapper.scrollLeft;
     startScrollTop = wrapper.scrollTop;
+  });
+
+  // Double-click primer arrow to zoom directly into micro view
+  canvas.addEventListener('dblclick', (e) => {
+    const mouseX = e.offsetX;
+    const mouseY = e.offsetY;
+
+    const panX = wrapper.scrollLeft / zoom;
+    const panY = wrapper.scrollTop;
+    const showText = zoom >= ZOOM_THRESHOLD;
+    const stickyTopHeight = RULER_HEIGHT + (showText ? REF_SEQ_HEIGHT : 0);
+
+    if (mouseY < stickyTopHeight) return;
+
+    for (const primer of parsedResults) {
+      const yPos = stickyTopHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP) - panY;
+      if (yPos + ROW_HEIGHT < stickyTopHeight || yPos > height) continue;
+
+      const primerStartX = (primer.start_pos - 1 - panX) * zoom;
+      const primerWidth = (primer.end_pos - primer.start_pos + 1) * zoom;
+      const visualWidth = Math.max(primerWidth, 15);
+
+      if (mouseX >= primerStartX && mouseX <= primerStartX + visualWidth &&
+          mouseY >= yPos && mouseY <= yPos + ROW_HEIGHT) {
+        
+        // Target zoom in micro view (20px per base)
+        const targetZoom = Math.min(30, Math.max(width / genomeLength, 20));
+        zoom = targetZoom;
+        spacer.style.width = `${genomeLength * zoom}px`;
+
+        // Center horizontally on the primer
+        const primerCenterBp = (primer.start_pos - 1 + primer.end_pos) / 2;
+        wrapper.scrollLeft = (primerCenterBp * targetZoom) - (width / 2);
+
+        // Center vertically on the primer track
+        const targetStickyHeight = RULER_HEIGHT + REF_SEQ_HEIGHT;
+        const primerAbsY = targetStickyHeight + 10 + primer.track * (ROW_HEIGHT + ROW_GAP);
+        wrapper.scrollTop = Math.max(0, primerAbsY - (height / 2));
+
+        tooltip.style.display = "none";
+        requestAnimationFrame(render);
+        break;
+      }
+    }
   });
 
   // Hovel tooltip logic

@@ -8,7 +8,7 @@ import { preValidateFile, validateAndProcessFasta } from './modules/fasta';
 import { initThemeManager } from './modules/theme';
 import { setupDragAndDrop, setupGlobalDropGuards } from './modules/drag-drop';
 import { ResultsTableController } from './modules/table';
-import { drawGenomeMap, redrawActiveGenomeMap } from './modules/genome-map';
+import { drawGenomeMap, redrawActiveGenomeMap, resetActiveGenomeMapView } from './modules/genome-map';
 import { ScannerService } from './modules/scanner';
 import { exportToTsv, exportToBed, exportToFasta } from './modules/export';
 
@@ -35,6 +35,7 @@ const viewMap = document.getElementById('view-map') as HTMLDivElement;
 const resultsContainer = document.getElementById('results-container') as HTMLDivElement;
 
 const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
+const resetViewBtn = document.getElementById('reset-view-btn') as HTMLButtonElement;
 const mapContainer = document.getElementById('genome-map-container') as HTMLDivElement;
 
 const autoDetectCb = document.getElementById('auto-detect-cb') as HTMLInputElement;
@@ -145,6 +146,10 @@ tabBtnMap.addEventListener('click', () => {
 
 sampleSelect.addEventListener('change', () => {
   drawGenomeMap(mapContainer, sampleSelect.value, allResults, sampleSequences);
+});
+
+resetViewBtn?.addEventListener('click', () => {
+  resetActiveGenomeMapView();
 });
 
 // --- Scan Execution ---
