@@ -183,11 +183,19 @@
                 <label style="font-weight: bold; font-size: 14px; color: var(--text-main);">
                   Select Sample to Visualize:
                 </label><br>
-                <select
-                  id="sample-select"
-                  style="padding: 8px; margin-top: 5px; width: 100%; max-width: 400px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main); font-size: 14px;">
-                  <!-- Options populated by TypeScript -->
-                </select>
+                <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
+                  <select
+                    id="sample-select"
+                    style="padding: 8px; width: 100%; max-width: 400px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main); font-size: 14px;">
+                    <!-- Options populated by TypeScript -->
+                  </select>
+                  <button
+                    id="reset-view-btn"
+                    title="Reset zoom to full genome overview"
+                    style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; white-space: nowrap;">
+                    Reset View
+                  </button>
+                </div>
               </div>
               
               <!-- Export Buttons -->
