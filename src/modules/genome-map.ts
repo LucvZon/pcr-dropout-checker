@@ -140,17 +140,6 @@ export function drawGenomeMap(
 
   const parsedResults = sampleResults.map((p, index) => {
     const tokens = parseAlignmentTokens(p.alignment);
-    // Ensure all primer bases and deletions match the mapped primer sequence
-    tokens.forEach((t, k) => {
-      if (p.mapped_primer_seq && k < p.mapped_primer_seq.length) {
-        const pChar = p.mapped_primer_seq[k].toUpperCase();
-        if (pChar === '-') {
-          t.text = '-';
-        } else if (t.isError) {
-          t.text = pChar;
-        }
-      }
-    });
     return { ...p, track: index, tokens };
   });
 
