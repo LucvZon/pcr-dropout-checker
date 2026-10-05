@@ -104,6 +104,7 @@ export function parseAlignmentTokens(alignment: string): AlignmentToken[] {
 // Track active map redraw callback to trigger on theme switch
 let activeRedrawFn: (() => void) | null = null;
 let activeResetViewFn: (() => void) | null = null;
+let activeMapAbortController: AbortController | null = null;
 
 export function redrawActiveGenomeMap(): void {
   if (activeRedrawFn) {
@@ -123,6 +124,12 @@ export function drawGenomeMap(
   allResults: MatchResult[],
   sampleSequences: Map<string, string>
 ): void {
+  // Abort any existing window listeners from previous renders to prevent memory leaks
+  if (activeMapAbortController) {
+    activeMapAbortController.abort();
+    activeMapAbortController = null;
+  }
+
   mapContainer.innerHTML = ""; // Clear old map
   activeRedrawFn = null;
   activeResetViewFn = null;
@@ -134,6 +141,10 @@ export function drawGenomeMap(
     mapContainer.innerHTML = `<p style="text-align: center; color: var(--text-muted); padding: 50px;">No valid primer alignments found for this sample.</p>`;
     return;
   }
+
+  const abortController = new AbortController();
+  activeMapAbortController = abortController;
+  const { signal } = abortController;
 
   // 1. Sort and pre-process mismatches
   sampleResults.sort((a, b) => a.start_pos - b.start_pos);
@@ -561,7 +572,7 @@ export function drawGenomeMap(
   window.addEventListener('mouseup', () => {
     isDragging = false;
     canvas.style.cursor = "grab";
-  });
+  }, { signal });
 
   window.addEventListener('mousemove', (e) => {
     if (!isDragging) return;
@@ -570,7 +581,7 @@ export function drawGenomeMap(
     // Changing scrollLeft/scrollTop automatically triggers the 'scroll' event and re-renders
     wrapper.scrollLeft = startScrollLeft - dx;
     wrapper.scrollTop = startScrollTop - dy;
-  });
+  }, { signal });
 
   // Zooming (Ctrl/Cmd + Scroll)
   wrapper.addEventListener('wheel', (e) => {
