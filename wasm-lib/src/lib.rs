@@ -538,6 +538,8 @@ fn find_best(
     is_fwd: bool,
 ) -> Option<Best> {
     let m = p.len();
+    if m == 0 || s.is_empty() { return None; }
+
     let (bs, cands) = match peq {
         PeqCache::Single(q) => myers_single(q, s, m),
         PeqCache::Multi(q, n) => myers_multi(q, s, m, *n),
@@ -597,9 +599,13 @@ pub fn scan_genomes(
     rev_keyword: &str,
     auto_detect: bool,
     progress: &Function,
-) -> String {
-    let ps = std::str::from_utf8(primers_fasta).expect("Invalid UTF-8 in primers");
-    let ss = std::str::from_utf8(samples_fasta).expect("Invalid UTF-8 in samples");
+) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+
+    let ps = std::str::from_utf8(primers_fasta)
+        .map_err(|e| JsValue::from_str(&format!("Invalid UTF-8 in primers FASTA: {}", e)))?;
+    let ss = std::str::from_utf8(samples_fasta)
+        .map_err(|e| JsValue::from_str(&format!("Invalid UTF-8 in samples FASTA: {}", e)))?;
     let primers = parse_fasta(ps);
     let samples = parse_fasta(ss);
     let mut res: Vec<MatchResult> = Vec::new();
@@ -619,7 +625,7 @@ pub fn scan_genomes(
 
         for (sid, sseq) in &samples {
             let sb = sseq.as_bytes();
-            if pl == 0 || sb.len() < pl.saturating_sub(2) {
+            if pl == 0 || sb.is_empty() || sb.len() < pl.saturating_sub(2) {
                 res.push(MatchResult {
                     sample_id: sid.clone(),
                     primer_id: pid.clone(),
@@ -630,7 +636,13 @@ pub fn scan_genomes(
                     start_pos: 0,
                     end_pos: 0,
                     sample_length: sb.len(),
-                    status: if pl == 0 { "Invalid Primer" } else { "Not Found" }.to_string(),
+                    status: if pl == 0 {
+                        "Invalid Primer"
+                    } else if sb.is_empty() {
+                        "Empty Sample"
+                    } else {
+                        "Not Found"
+                    }.to_string(),
                     alignment: String::new(),
                     mapped_primer_seq: String::from_utf8(fb.to_vec()).unwrap_or_default(),
                 });
@@ -638,21 +650,55 @@ pub fn scan_genomes(
                 continue;
             }
 
-            let (is_fwd, best) = if auto_detect {
-                let f = find_best(fb, sb, fq.as_ref().unwrap(), usize::MAX, usize::MAX, true).unwrap();
-                if f.total == 0 {
-                    (true, f)
-                } else if let Some(r) = find_best(rb, sb, rq.as_ref().unwrap(), f.total, f.critical, false) {
-                    (false, r)
+            let (is_fwd, best_opt) = if auto_detect {
+                let f = find_best(fb, sb, fq.as_ref().unwrap(), usize::MAX, usize::MAX, true);
+                if let Some(ref f_match) = f {
+                    if f_match.total == 0 {
+                        (true, f)
+                    } else {
+                        let r = find_best(rb, sb, rq.as_ref().unwrap(), f_match.total, f_match.critical, false);
+                        if let Some(r_match) = r {
+                            (false, Some(r_match))
+                        } else {
+                            (true, f)
+                        }
+                    }
                 } else {
-                    (true, f)
+                    let r = find_best(rb, sb, rq.as_ref().unwrap(), usize::MAX, usize::MAX, false);
+                    if r.is_some() {
+                        (false, r)
+                    } else {
+                        (true, None)
+                    }
                 }
             } else {
                 // Fallback to strict keywords
                 if is_r && !is_f {
-                    (false, find_best(rb, sb, rq.as_ref().unwrap(), usize::MAX, usize::MAX, false).unwrap())
+                    (false, find_best(rb, sb, rq.as_ref().unwrap(), usize::MAX, usize::MAX, false))
                 } else {
-                    (true, find_best(fb, sb, fq.as_ref().unwrap(), usize::MAX, usize::MAX, true).unwrap())
+                    (true, find_best(fb, sb, fq.as_ref().unwrap(), usize::MAX, usize::MAX, true))
+                }
+            };
+
+            let best = match best_opt {
+                Some(b) => b,
+                None => {
+                    res.push(MatchResult {
+                        sample_id: sid.clone(),
+                        primer_id: pid.clone(),
+                        is_forward: is_fwd,
+                        mismatches: 99,
+                        gaps: 0,
+                        cigar: String::new(),
+                        start_pos: 0,
+                        end_pos: 0,
+                        sample_length: sb.len(),
+                        status: "Not Found".to_string(),
+                        alignment: String::new(),
+                        mapped_primer_seq: String::from_utf8(if is_fwd { fb.to_vec() } else { rb.to_vec() }).unwrap_or_default(),
+                    });
+                    done += 1;
+                    continue;
                 }
             };
 
@@ -690,5 +736,6 @@ pub fn scan_genomes(
             }
         }
     }
-    serde_json::to_string(&res).unwrap()
+    serde_json::to_string(&res)
+        .map_err(|e| JsValue::from_str(&format!("JSON serialization failed: {}", e)))
 }
