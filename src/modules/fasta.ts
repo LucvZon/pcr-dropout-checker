@@ -51,7 +51,8 @@ export function validateAndProcessFasta(rawText: string, fileType: string): Proc
   const saveCurrent = () => {
     if (currentId) {
       if (currentSeq.trim() === "") {
-        showToast(`Warning: Header "${currentId}" in ${fileType} has no sequence data.`, "warning");
+        showToast(`Warning: Header "${currentId}" in ${fileType} has no sequence data and will be skipped.`, "warning");
+        return;
       }
 
       // Hard Cap on Primer Length
