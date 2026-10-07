@@ -586,7 +586,7 @@ export function drawHeatmapMatrix(
           <span style="color: #94a3b8; font-size: 11px; margin-left: 6px;">➔ ${escapeHTML(sampleId)}</span>
         </div>
         <div><strong>Status:</strong> <span style="color: ${statusColor}; font-weight: bold;">${status}</span></div>
-        <div><strong>Edits:</strong> ${match ? (match.mismatches === 99 ? 'N/A' : match.mismatches) : 'N/A'} (Gaps: ${match?.gaps ?? 0})</div>
+        <div><strong>Mismatches:</strong> ${match ? (match.mismatches === 99 ? 'N/A' : match.mismatches) : 'N/A'} (Gaps: ${match?.gaps ?? 0})</div>
         <div><strong>CIGAR:</strong> <span style="font-family: monospace;">${match?.cigar || 'N/A'}</span></div>
         ${match && match.start_pos > 0 ? `<div><strong>Coord:</strong> ${match.start_pos.toLocaleString()} - ${match.end_pos.toLocaleString()} bp</div>` : ''}
       `;
@@ -668,7 +668,7 @@ export async function exportHeatmapMatrixTsv(
     const row = [p];
     for (const s of samples) {
       const match = matrix.get(p)?.get(s);
-      row.push(match ? `${match.status} (${match.mismatches} edits)` : 'Not Found');
+      row.push(match ? `${match.status} (${match.mismatches} mismatches)` : 'Not Found');
     }
     rows.push(row.join('\t'));
   }
