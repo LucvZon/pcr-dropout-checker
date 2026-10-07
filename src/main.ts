@@ -11,6 +11,7 @@ import { ResultsTableController } from './modules/table';
 import { drawGenomeMap, redrawActiveGenomeMap, resetActiveGenomeMapView } from './modules/genome-map';
 import { ScannerService } from './modules/scanner';
 import { exportToTsv, exportToBed, exportToFasta } from './modules/export';
+import { drawHeatmapMatrix, redrawActiveHeatmap, exportHeatmapMatrixTsv, type HeatmapState } from './modules/heatmap';
 
 // --- UI DOM References ---
 const fwdInput = document.getElementById('fwd-key') as HTMLInputElement;
@@ -30,13 +31,23 @@ const themeToggleCb = document.getElementById('theme-toggle-cb') as HTMLInputEle
 const tabNav = document.getElementById('tab-nav') as HTMLDivElement;
 const tabBtnTable = document.getElementById('tab-btn-table') as HTMLButtonElement;
 const tabBtnMap = document.getElementById('tab-btn-map') as HTMLButtonElement;
+const tabBtnMatrix = document.getElementById('tab-btn-matrix') as HTMLButtonElement;
 const viewTable = document.getElementById('view-table') as HTMLDivElement;
 const viewMap = document.getElementById('view-map') as HTMLDivElement;
+const viewMatrix = document.getElementById('view-matrix') as HTMLDivElement;
 const resultsContainer = document.getElementById('results-container') as HTMLDivElement;
 
 const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
 const resetViewBtn = document.getElementById('reset-view-btn') as HTMLButtonElement;
 const mapContainer = document.getElementById('genome-map-container') as HTMLDivElement;
+
+const heatmapContainer = document.getElementById('heatmap-matrix-container') as HTMLDivElement;
+const matrixModeOverview = document.getElementById('matrix-mode-overview') as HTMLButtonElement;
+const matrixModeDetailed = document.getElementById('matrix-mode-detailed') as HTMLButtonElement;
+const matrixSortCb = document.getElementById('matrix-sort-cb') as HTMLInputElement;
+const matrixHidePerfectCb = document.getElementById('matrix-hide-perfect-cb') as HTMLInputElement;
+const matrixExportBtn = document.getElementById('matrix-export-btn') as HTMLButtonElement;
+const matrixStatsBadge = document.getElementById('matrix-stats-badge') as HTMLSpanElement;
 
 const autoDetectCb = document.getElementById('auto-detect-cb') as HTMLInputElement;
 const keywordContainer = document.getElementById('keyword-container') as HTMLDivElement;
@@ -45,6 +56,12 @@ const keywordContainer = document.getElementById('keyword-container') as HTMLDiv
 let allResults: MatchResult[] = [];
 let sampleSequences = new Map<string, string>();
 let currentPrimerFileName = "primers";
+
+const heatmapState: HeatmapState = {
+  viewMode: 'overview',
+  sortByFailureRate: true,
+  hidePerfectSamples: false,
+};
 
 // --- Services & Controllers ---
 const scannerService = new ScannerService();
@@ -62,7 +79,10 @@ const tableController = new ResultsTableController({
 // --- Theme Setup ---
 initThemeManager({
   toggleElement: themeToggleCb,
-  onThemeChanged: () => redrawActiveGenomeMap()
+  onThemeChanged: () => {
+    redrawActiveGenomeMap();
+    redrawActiveHeatmap();
+  }
 });
 
 // --- Keyword & Auto-detect Settings ---
@@ -109,39 +129,70 @@ document.getElementById("github-link")?.addEventListener("click", async (e) => {
   }
 });
 
+// --- Heatmap UI Refresh ---
+function renderHeatmap() {
+  const uniquePrimers = new Set(allResults.map(r => r.primer_id)).size;
+  const uniqueSamples = new Set(allResults.map(r => r.sample_id)).size;
+  matrixStatsBadge.textContent = `${uniquePrimers} Primers × ${uniqueSamples} Samples`;
+
+  drawHeatmapMatrix(heatmapContainer, allResults, heatmapState, (updated) => {
+    Object.assign(heatmapState, updated);
+  });
+}
+
+function updateModeButtons() {
+  if (heatmapState.viewMode === 'overview') {
+    matrixModeOverview.style.background = "#2563eb";
+    matrixModeOverview.style.color = "white";
+    matrixModeDetailed.style.background = "var(--bg-card)";
+    matrixModeDetailed.style.color = "var(--text-muted)";
+  } else {
+    matrixModeDetailed.style.background = "#2563eb";
+    matrixModeDetailed.style.color = "white";
+    matrixModeOverview.style.background = "var(--bg-card)";
+    matrixModeOverview.style.color = "var(--text-muted)";
+  }
+}
+
 // --- Tabs Management ---
-tabBtnTable.addEventListener('click', () => {
-  viewTable.style.display = "block";
-  viewMap.style.display = "none";
+function setTabActive(activeTab: 'table' | 'map' | 'matrix') {
+  viewTable.style.display = activeTab === 'table' ? "block" : "none";
+  viewMap.style.display = activeTab === 'map' ? "block" : "none";
+  viewMatrix.style.display = activeTab === 'matrix' ? "block" : "none";
 
-  tabBtnTable.style.background = "var(--bg-card)";
-  tabBtnTable.style.border = "2px solid var(--border)";
-  tabBtnTable.style.borderBottom = "2px solid var(--bg-card)";
-  tabBtnTable.style.color = "var(--border-active)";
+  const tabs = [
+    { key: 'table', btn: tabBtnTable },
+    { key: 'map', btn: tabBtnMap },
+    { key: 'matrix', btn: tabBtnMatrix },
+  ];
 
-  tabBtnMap.style.background = "var(--bg-alt)";
-  tabBtnMap.style.border = "2px solid transparent";
-  tabBtnMap.style.borderBottom = "none";
-  tabBtnMap.style.color = "var(--text-muted)";
-});
+  for (const { key, btn } of tabs) {
+    if (key === activeTab) {
+      btn.style.background = "var(--bg-card)";
+      btn.style.border = "2px solid var(--border)";
+      btn.style.borderBottom = "2px solid var(--bg-card)";
+      btn.style.color = "var(--border-active)";
+    } else {
+      btn.style.background = "var(--bg-alt)";
+      btn.style.border = "2px solid transparent";
+      btn.style.borderBottom = "none";
+      btn.style.color = "var(--text-muted)";
+    }
+  }
+}
+
+tabBtnTable.addEventListener('click', () => setTabActive('table'));
 
 tabBtnMap.addEventListener('click', () => {
-  viewMap.style.display = "block";
-  viewTable.style.display = "none";
-
-  tabBtnMap.style.background = "var(--bg-card)";
-  tabBtnMap.style.border = "2px solid var(--border)";
-  tabBtnMap.style.borderBottom = "2px solid var(--bg-card)";
-  tabBtnMap.style.color = "var(--border-active)";
-
-  tabBtnTable.style.background = "var(--bg-alt)";
-  tabBtnTable.style.border = "2px solid transparent";
-  tabBtnTable.style.borderBottom = "none";
-  tabBtnTable.style.color = "var(--text-muted)";
-
+  setTabActive('map');
   if (sampleSelect.value) {
     drawGenomeMap(mapContainer, sampleSelect.value, allResults, sampleSequences);
   }
+});
+
+tabBtnMatrix.addEventListener('click', () => {
+  setTabActive('matrix');
+  renderHeatmap();
 });
 
 sampleSelect.addEventListener('change', () => {
@@ -150,6 +201,33 @@ sampleSelect.addEventListener('change', () => {
 
 resetViewBtn?.addEventListener('click', () => {
   resetActiveGenomeMapView();
+});
+
+// Heatmap Mode & Filter Listeners
+matrixModeOverview.addEventListener('click', () => {
+  heatmapState.viewMode = 'overview';
+  updateModeButtons();
+  renderHeatmap();
+});
+
+matrixModeDetailed.addEventListener('click', () => {
+  heatmapState.viewMode = 'detailed';
+  updateModeButtons();
+  renderHeatmap();
+});
+
+matrixSortCb.addEventListener('change', () => {
+  heatmapState.sortByFailureRate = matrixSortCb.checked;
+  renderHeatmap();
+});
+
+matrixHidePerfectCb.addEventListener('change', () => {
+  heatmapState.hidePerfectSamples = matrixHidePerfectCb.checked;
+  renderHeatmap();
+});
+
+matrixExportBtn.addEventListener('click', () => {
+  exportHeatmapMatrixTsv(allResults, heatmapState);
 });
 
 // --- Scan Execution ---
