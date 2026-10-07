@@ -11,7 +11,14 @@ import { ResultsTableController } from './modules/table';
 import { drawGenomeMap, redrawActiveGenomeMap, resetActiveGenomeMapView } from './modules/genome-map';
 import { ScannerService } from './modules/scanner';
 import { exportToTsv, exportToBed, exportToFasta } from './modules/export';
-import { drawHeatmapMatrix, redrawActiveHeatmap, exportHeatmapMatrixTsv, type HeatmapState } from './modules/heatmap';
+import { 
+  drawHeatmapMatrix, 
+  redrawActiveHeatmap, 
+  resetActiveHeatmapView,
+  zoomActiveHeatmap,
+  exportHeatmapMatrixTsv, 
+  type HeatmapState 
+} from './modules/heatmap';
 
 // --- UI DOM References ---
 const fwdInput = document.getElementById('fwd-key') as HTMLInputElement;
@@ -42,8 +49,9 @@ const resetViewBtn = document.getElementById('reset-view-btn') as HTMLButtonElem
 const mapContainer = document.getElementById('genome-map-container') as HTMLDivElement;
 
 const heatmapContainer = document.getElementById('heatmap-matrix-container') as HTMLDivElement;
-const matrixModeOverview = document.getElementById('matrix-mode-overview') as HTMLButtonElement;
-const matrixModeDetailed = document.getElementById('matrix-mode-detailed') as HTMLButtonElement;
+const matrixResetViewBtn = document.getElementById('matrix-reset-view-btn') as HTMLButtonElement;
+const matrixZoomInBtn = document.getElementById('matrix-zoom-in-btn') as HTMLButtonElement;
+const matrixZoomOutBtn = document.getElementById('matrix-zoom-out-btn') as HTMLButtonElement;
 const matrixSortCb = document.getElementById('matrix-sort-cb') as HTMLInputElement;
 const matrixHidePerfectCb = document.getElementById('matrix-hide-perfect-cb') as HTMLInputElement;
 const matrixExportBtn = document.getElementById('matrix-export-btn') as HTMLButtonElement;
@@ -58,7 +66,6 @@ let sampleSequences = new Map<string, string>();
 let currentPrimerFileName = "primers";
 
 const heatmapState: HeatmapState = {
-  viewMode: 'overview',
   sortByFailureRate: true,
   hidePerfectSamples: false,
 };
@@ -135,23 +142,7 @@ function renderHeatmap() {
   const uniqueSamples = new Set(allResults.map(r => r.sample_id)).size;
   matrixStatsBadge.textContent = `${uniquePrimers} Primers × ${uniqueSamples} Samples`;
 
-  drawHeatmapMatrix(heatmapContainer, allResults, heatmapState, (updated) => {
-    Object.assign(heatmapState, updated);
-  });
-}
-
-function updateModeButtons() {
-  if (heatmapState.viewMode === 'overview') {
-    matrixModeOverview.style.background = "#2563eb";
-    matrixModeOverview.style.color = "white";
-    matrixModeDetailed.style.background = "var(--bg-card)";
-    matrixModeDetailed.style.color = "var(--text-muted)";
-  } else {
-    matrixModeDetailed.style.background = "#2563eb";
-    matrixModeDetailed.style.color = "white";
-    matrixModeOverview.style.background = "var(--bg-card)";
-    matrixModeOverview.style.color = "var(--text-muted)";
-  }
+  drawHeatmapMatrix(heatmapContainer, allResults, heatmapState);
 }
 
 // --- Tabs Management ---
@@ -203,17 +194,17 @@ resetViewBtn?.addEventListener('click', () => {
   resetActiveGenomeMapView();
 });
 
-// Heatmap Mode & Filter Listeners
-matrixModeOverview.addEventListener('click', () => {
-  heatmapState.viewMode = 'overview';
-  updateModeButtons();
-  renderHeatmap();
+// --- Heatmap Controls ---
+matrixResetViewBtn.addEventListener('click', () => {
+  resetActiveHeatmapView();
 });
 
-matrixModeDetailed.addEventListener('click', () => {
-  heatmapState.viewMode = 'detailed';
-  updateModeButtons();
-  renderHeatmap();
+matrixZoomInBtn.addEventListener('click', () => {
+  zoomActiveHeatmap(1.25);
+});
+
+matrixZoomOutBtn.addEventListener('click', () => {
+  zoomActiveHeatmap(0.8);
 });
 
 matrixSortCb.addEventListener('change', () => {
