@@ -198,18 +198,26 @@ export function drawHeatmapMatrix(
   tooltip.style.display = 'none';
   tooltip.style.backgroundColor = 'rgba(17, 24, 39, 0.95)';
   tooltip.style.color = '#f9fafb';
-  tooltip.style.padding = '12px';
+  tooltip.style.padding = '10px 14px';
   tooltip.style.borderRadius = '8px';
   tooltip.style.fontSize = '12px';
   tooltip.style.pointerEvents = 'none';
   tooltip.style.zIndex = '1000';
   tooltip.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.5)';
-  tooltip.style.whiteSpace = 'nowrap';
   tooltip.style.lineHeight = '1.5';
+  tooltip.style.maxWidth = '300px';
+  tooltip.style.minWidth = '220px';
+  tooltip.style.boxSizing = 'border-box';
   wrapper.appendChild(tooltip);
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+
+  // Helper to truncate long sequence headers
+  function truncateHeader(str: string, maxLen: number = 32): string {
+    if (str.length <= maxLen) return str;
+    return str.slice(0, maxLen - 1) + '…';
+  }
 
   function getFitCellWidth(): number {
     const availWidth = Math.max(200, wrapper.clientWidth - ROW_HEADER_WIDTH - 20);
@@ -220,15 +228,20 @@ export function drawHeatmapMatrix(
 
   function getCellHeight(): number {
     const minW = getFitCellWidth();
-    // Smoothly scale row height between 15px and 22px as user zooms in
     const progress = Math.min(1, Math.max(0, (cellWidth - minW) / (24 - minW || 1)));
     return 15 + (progress * 7);
   }
 
+  // Right-side padding buffer for rotated text
+  function getRightHeaderPadding(): number {
+    return cellWidth >= 12 ? 110 : 20;
+  }
+
   function updateSpacerSize() {
     const rowHeight = getCellHeight();
-    const totalGridWidth = ROW_HEADER_WIDTH + (samples.length * cellWidth);
-    const totalGridHeight = COL_HEADER_HEIGHT + (primers.length * rowHeight);
+    const rightPadding = getRightHeaderPadding();
+    const totalGridWidth = ROW_HEADER_WIDTH + (samples.length * cellWidth) + rightPadding;
+    const totalGridHeight = COL_HEADER_HEIGHT + (primers.length * rowHeight) + 30; // 30px bottom clearance
     spacer.style.width = `${totalGridWidth}px`;
     spacer.style.height = `${Math.max(580, totalGridHeight)}px`;
   }
@@ -264,17 +277,17 @@ export function drawHeatmapMatrix(
 
     ctx.clearRect(0, 0, width, height);
 
-    // Culling Range
-    const colStart = Math.max(0, Math.floor((scrollX - 5) / cellWidth));
+    // Visible Column & Row Culling Window
+    const colStart = Math.max(0, Math.floor((scrollX - 10) / cellWidth));
     const colEnd = Math.min(
       samples.length - 1,
-      Math.ceil((scrollX + width - ROW_HEADER_WIDTH + 5) / cellWidth)
+      Math.ceil((scrollX + width - ROW_HEADER_WIDTH + 10) / cellWidth)
     );
 
-    const rowStart = Math.max(0, Math.floor((scrollY - 5) / rowHeight));
+    const rowStart = Math.max(0, Math.floor((scrollY - 10) / rowHeight));
     const rowEnd = Math.min(
       primers.length - 1,
-      Math.ceil((scrollY + height - COL_HEADER_HEIGHT + 5) / rowHeight)
+      Math.ceil((scrollY + height - COL_HEADER_HEIGHT + 10) / rowHeight)
     );
 
     const showBorders = cellWidth >= 10 && rowHeight >= 10;
@@ -379,15 +392,15 @@ export function drawHeatmapMatrix(
       for (let c = colStart; c <= colEnd; c++) {
         const sampleId = samples[c];
         const x = ROW_HEADER_WIDTH + (c * cellWidth) - scrollX + (cellWidth / 2);
-        if (x < ROW_HEADER_WIDTH || x > width) continue;
+        if (x < ROW_HEADER_WIDTH - 10 || x > width + 40) continue;
 
         ctx.save();
         ctx.translate(x, COL_HEADER_HEIGHT - 8);
         ctx.rotate(-Math.PI / 4); // Rotated 45 degrees
 
         let sLabel = sampleId;
-        if (ctx.measureText(sLabel).width > 85) {
-          while (sLabel.length > 4 && ctx.measureText(sLabel + '…').width > 85) {
+        if (ctx.measureText(sLabel).width > 90) {
+          while (sLabel.length > 4 && ctx.measureText(sLabel + '…').width > 90) {
             sLabel = sLabel.slice(0, -1);
           }
           sLabel += '…';
@@ -485,7 +498,7 @@ export function drawHeatmapMatrix(
   });
   resizeObserver.observe(wrapper);
 
-  // Drag-to-Pan (Click and drag)
+  // Drag-to-Pan
   let isDragging = false;
   let startX = 0, startY = 0;
   let startScrollLeft = 0, startScrollTop = 0;
@@ -518,14 +531,14 @@ export function drawHeatmapMatrix(
 
   // Continuous Zoom with Ctrl / Cmd + Wheel
   wrapper.addEventListener('wheel', (e) => {
-    if (!e.ctrlKey && !e.metaKey) return; // Allow normal native scroll if modifier isn't held
+    if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
 
     const zoomFactor = e.deltaY > 0 ? 0.88 : 1.14;
     applyZoom(zoomFactor, e.offsetX, e.offsetY);
   }, { passive: false });
 
-  // Double Click: Zoom in directly to cell, or zoom out if already close
+  // Double Click: Toggle between close-up and fit
   canvas.addEventListener('dblclick', (e) => {
     const mouseX = e.offsetX;
     const mouseY = e.offsetY;
@@ -536,7 +549,6 @@ export function drawHeatmapMatrix(
     const primerIdx = Math.floor((wrapper.scrollTop + mouseY - COL_HEADER_HEIGHT) / rowHeight);
 
     const minW = getFitCellWidth();
-    // Toggle between focused micro view (26px) and overview
     const targetW = cellWidth < 20 ? 26 : minW;
     cellWidth = targetW;
     updateSpacerSize();
@@ -549,7 +561,7 @@ export function drawHeatmapMatrix(
     requestAnimationFrame(render);
   });
 
-  // Interactive Hover Tooltip
+  // Interactive Hover Tooltip with Stable, Anti-Jitter Positioning
   canvas.addEventListener('mousemove', (e) => {
     if (isDragging) {
       tooltip.style.display = 'none';
@@ -580,10 +592,20 @@ export function drawHeatmapMatrix(
       if (status === 'High Risk') statusColor = '#f97316';
       if (status === 'Failure' || status === 'Not Found') statusColor = '#f87171';
 
+      // Truncate display names to prevent tooltip ballooning
+      const safeShortPrimer = escapeHTML(truncateHeader(primerId, 28));
+      const safeShortSample = escapeHTML(truncateHeader(sampleId, 32));
+      const safeFullPrimer = escapeHTML(primerId);
+      const safeFullSample = escapeHTML(sampleId);
+
       tooltip.innerHTML = `
-        <div style="margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 4px;">
-          <strong style="font-size: 13px;">${escapeHTML(primerId)}</strong>
-          <span style="color: #94a3b8; font-size: 11px; margin-left: 6px;">➔ ${escapeHTML(sampleId)}</span>
+        <div style="margin-bottom: 6px; border-bottom: 1px solid #374151; padding-bottom: 5px;">
+          <div style="font-weight: bold; font-size: 13px; color: #f9fafb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFullPrimer}">
+            ${safeShortPrimer}
+          </div>
+          <div style="font-size: 11px; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFullSample}">
+            Sample: <span style="color: #e2e8f0; font-weight: 600;">${safeShortSample}</span>
+          </div>
         </div>
         <div><strong>Status:</strong> <span style="color: ${statusColor}; font-weight: bold;">${status}</span></div>
         <div><strong>Mismatches:</strong> ${match ? (match.mismatches === 99 ? 'N/A' : match.mismatches) : 'N/A'} (Gaps: ${match?.gaps ?? 0})</div>
@@ -591,16 +613,24 @@ export function drawHeatmapMatrix(
         ${match && match.start_pos > 0 ? `<div><strong>Coord:</strong> ${match.start_pos.toLocaleString()} - ${match.end_pos.toLocaleString()} bp</div>` : ''}
       `;
 
-      let leftPos = e.clientX + 15;
-      const topPos = e.clientY + 15;
+      tooltip.style.display = 'block';
 
-      if (leftPos + 220 > window.innerWidth) {
-        leftPos = e.clientX - 235;
-      }
+      const tooltipWidth = tooltip.offsetWidth || 240;
+      const tooltipHeight = tooltip.offsetHeight || 140;
+
+      // Stable flip decision: depends monotonically on cursor coordinate, not fluctuating text width
+      const FLIP_THRESHOLD_X = window.innerWidth - 310;
+      const FLIP_THRESHOLD_Y = window.innerHeight - 170;
+
+      let leftPos = e.clientX > FLIP_THRESHOLD_X ? (e.clientX - tooltipWidth - 15) : (e.clientX + 15);
+      let topPos = e.clientY > FLIP_THRESHOLD_Y ? (e.clientY - tooltipHeight - 15) : (e.clientY + 15);
+
+      // Clamp safely to window edges
+      leftPos = Math.max(12, Math.min(window.innerWidth - tooltipWidth - 12, leftPos));
+      topPos = Math.max(12, Math.min(window.innerHeight - tooltipHeight - 12, topPos));
 
       tooltip.style.left = `${leftPos}px`;
       tooltip.style.top = `${topPos}px`;
-      tooltip.style.display = 'block';
     } else {
       tooltip.style.display = 'none';
     }
