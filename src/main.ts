@@ -244,7 +244,7 @@ runBtn.addEventListener('click', async () => {
   currentPrimerFileName = pFile.name.replace(/\.[^/.]+$/, "");
 
   runBtn.disabled = true;
-  runBtn.innerText = "⏳ Reading files & Processing...";
+  runBtn.innerText = "Reading files & Processing...";
   cancelBtn.style.display = "block";
 
   progressContainer.style.display = "block";
