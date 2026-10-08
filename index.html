@@ -216,6 +216,23 @@
               </div>
 
             </div>
+
+            <!-- Genome Map Legend -->
+            <div style="display: flex; gap: 15px; margin-top: 12px; font-size: 12px; font-weight: bold; align-items: center; border-top: 1px solid var(--border); padding-top: 10px;">
+              <span style="color: var(--text-muted);">Status Legend:</span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <span style="width: 12px; height: 12px; background: #22c55e; border-radius: 2px;"></span> Perfect
+              </span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <span style="width: 12px; height: 12px; background: #f59e0b; border-radius: 2px;"></span> Low Risk
+              </span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <span style="width: 12px; height: 12px; background: #ea580c; border-radius: 2px;"></span> High Risk
+              </span>
+              <span style="display: flex; align-items: center; gap: 5px;">
+                <span style="width: 12px; height: 12px; background: #ef4444; border-radius: 2px;"></span> Failure
+              </span>
+            </div>
           </div>
           
           <div id="genome-map-container" style="margin-top: 20px; position: relative; width: 100%; min-height: 400px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 20px; box-sizing: border-box; overflow-x: auto;">
@@ -223,7 +240,7 @@
           </div>
         </div>
         
-<!-- ============================ -->
+        <!-- ============================ -->
         <!-- TAB 3: HEATMAP MATRIX        -->
         <!-- ============================ -->
         <div id="view-matrix" style="display: none;">
