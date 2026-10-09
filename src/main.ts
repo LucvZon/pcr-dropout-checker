@@ -65,9 +65,20 @@ let allResults: MatchResult[] = [];
 let sampleSequences = new Map<string, string>();
 let currentPrimerFileName = "primers";
 
+// --- Heatmap Settings & State ---
+const savedMatrixSort = localStorage.getItem('pcr-matrix-sort');
+const savedMatrixHidePerfect = localStorage.getItem('pcr-matrix-hide-perfect');
+
+if (savedMatrixSort !== null) {
+  matrixSortCb.checked = savedMatrixSort === 'true';
+}
+if (savedMatrixHidePerfect !== null) {
+  matrixHidePerfectCb.checked = savedMatrixHidePerfect === 'true';
+}
+
 const heatmapState: HeatmapState = {
-  sortByFailureRate: true,
-  hidePerfectSamples: false,
+  sortByFailureRate: matrixSortCb.checked,
+  hidePerfectSamples: matrixHidePerfectCb.checked,
 };
 
 // --- Services & Controllers ---
@@ -138,6 +149,9 @@ document.getElementById("github-link")?.addEventListener("click", async (e) => {
 
 // --- Heatmap UI Refresh ---
 function renderHeatmap() {
+  heatmapState.sortByFailureRate = matrixSortCb.checked;
+  heatmapState.hidePerfectSamples = matrixHidePerfectCb.checked;
+
   const uniquePrimers = new Set(allResults.map(r => r.primer_id)).size;
   const uniqueSamples = new Set(allResults.map(r => r.sample_id)).size;
   matrixStatsBadge.textContent = `${uniquePrimers} Primers × ${uniqueSamples} Samples`;
@@ -208,11 +222,13 @@ matrixZoomOutBtn.addEventListener('click', () => {
 });
 
 matrixSortCb.addEventListener('change', () => {
+  localStorage.setItem('pcr-matrix-sort', matrixSortCb.checked.toString());
   heatmapState.sortByFailureRate = matrixSortCb.checked;
   renderHeatmap();
 });
 
 matrixHidePerfectCb.addEventListener('change', () => {
+  localStorage.setItem('pcr-matrix-hide-perfect', matrixHidePerfectCb.checked.toString());
   heatmapState.hidePerfectSamples = matrixHidePerfectCb.checked;
   renderHeatmap();
 });
